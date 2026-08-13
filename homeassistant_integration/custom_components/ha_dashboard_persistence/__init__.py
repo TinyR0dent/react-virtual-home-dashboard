@@ -34,25 +34,24 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-SAVE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Optional("version", default=1): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Required("bindings"): list,
-    }
-)
+SAVE_WS_SCHEMA = {
+    "type": f"{DOMAIN}/save",
+    "version": int,
+    "bindings": list,
+}
 
-SAVE_WS_SCHEMA = vol.Schema(
-    {
-        vol.Required("type"): f"{DOMAIN}/save",
-        vol.Optional("version", default=1): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Required("bindings"): list,
-    }
-)
+LOAD_WS_SCHEMA = {
+    "type": f"{DOMAIN}/load",
+}
 
-LOAD_WS_SCHEMA = vol.Schema({vol.Required("type"): f"{DOMAIN}/load"})
+CLEAR_WS_SCHEMA = {
+    "type": f"{DOMAIN}/clear",
+}
 
-CLEAR_WS_SCHEMA = vol.Schema({vol.Required("type"): f"{DOMAIN}/clear"})
-BOOTSTRAP_WS_SCHEMA = vol.Schema({vol.Required("type"): f"{DOMAIN}/bootstrap"})
+BOOTSTRAP_WS_SCHEMA = {
+    "type": f"{DOMAIN}/bootstrap",
+}
+
 
 
 def _default_payload() -> dict[str, Any]:
@@ -83,41 +82,28 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
 
     await hass.async_add_executor_job(_copy)
 
+from homeassistant.components.panel_custom import async_register_panel
+from homeassistant.components import frontend
 
-def _register_sidebar_panel(hass: HomeAssistant) -> None:
-    frontend = getattr(hass.components, "frontend", None)
-    if frontend is None:
-        _LOGGER.warning("Home Assistant frontend component unavailable; sidebar panel not registered.")
-        return
-
+async def _register_sidebar_panel(hass: HomeAssistant) -> None:
     try:
         frontend.async_remove_panel(PANEL_URL_PATH)
     except Exception:
-        # Removing a panel that does not exist is safe to ignore.
         pass
 
     frontend.async_register_built_in_panel(
+        hass,
         component_name="iframe",
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
         frontend_url_path=PANEL_URL_PATH,
         config={
-            "url": f"/local/{PANEL_TARGET_FOLDER}/index.html",
+            "url": "/local/ha-dashboard/index.html",
             "require_admin": False,
         },
         require_admin=False,
     )
 
-
-def _unregister_sidebar_panel(hass: HomeAssistant) -> None:
-    frontend = getattr(hass.components, "frontend", None)
-    if frontend is None:
-        return
-
-    try:
-        frontend.async_remove_panel(PANEL_URL_PATH)
-    except Exception:
-        pass
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -200,6 +186,7 @@ def _entry_floors(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "name": str(source.get(CONF_SECOND_NAME, "Second Floor")).strip() or "Second Floor",
                 "model_path": second_model,
                 "y_offset": _safe_float(source.get(CONF_SECOND_Y_OFFSET, 4.8), 4.8),
+                "optional": True,
             }
         )
 
@@ -323,7 +310,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         payload = await _async_read_payload(hass)
         connection.send_result(msg["id"], payload)
 
-    hass.services.async_register(DOMAIN, "save", async_save_service, schema=SAVE_SERVICE_SCHEMA)
+    hass.services.async_register(DOMAIN, "save", async_save_service)
     hass.services.async_register(DOMAIN, "clear", async_clear_service)
 
     websocket_api.async_register_command(hass, ws_save)
@@ -334,15 +321,38 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     return True
 
 
+from homeassistant.components.http import StaticPathConfig
+from homeassistant.components import frontend
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault("entries", {})
     hass.data[DOMAIN]["entries"][entry.entry_id] = entry
-    await _async_install_panel_assets(hass)
-    _register_sidebar_panel(hass)
 
+    # 1. Install panel assets (must complete before registering paths/panel)
+    await _async_install_panel_assets(hass)
+
+    from homeassistant.components.http import StaticPathConfig
+
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                url_path="/local/ha-dashboard",
+                path=hass.config.path("www/ha-dashboard"),
+                cache_headers=False,
+            )
+        ]
+    )
+
+    # 3. Register the sidebar panel (async function)
+    await _register_sidebar_panel(hass)
+
+    # 4. Register update listener
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
     return True
+
+
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

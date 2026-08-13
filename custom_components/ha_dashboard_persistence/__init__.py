@@ -34,25 +34,24 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-SAVE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Optional("version", default=1): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Required("bindings"): list,
-    }
-)
+SAVE_WS_SCHEMA = {
+    "type": f"{DOMAIN}/save",
+    "version": int,
+    "bindings": list,
+}
 
-SAVE_WS_SCHEMA = vol.Schema(
-    {
-        vol.Required("type"): f"{DOMAIN}/save",
-        vol.Optional("version", default=1): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Required("bindings"): list,
-    }
-)
+LOAD_WS_SCHEMA = {
+    "type": f"{DOMAIN}/load",
+}
 
-LOAD_WS_SCHEMA = vol.Schema({vol.Required("type"): f"{DOMAIN}/load"})
+CLEAR_WS_SCHEMA = {
+    "type": f"{DOMAIN}/clear",
+}
 
-CLEAR_WS_SCHEMA = vol.Schema({vol.Required("type"): f"{DOMAIN}/clear"})
-BOOTSTRAP_WS_SCHEMA = vol.Schema({vol.Required("type"): f"{DOMAIN}/bootstrap"})
+BOOTSTRAP_WS_SCHEMA = {
+    "type": f"{DOMAIN}/bootstrap",
+}
+
 
 
 def _default_payload() -> dict[str, Any]:
@@ -84,41 +83,17 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
     await hass.async_add_executor_job(_copy)
 
 
-def _register_sidebar_panel(hass: HomeAssistant) -> None:
-    frontend = getattr(hass.components, "frontend", None)
-    if frontend is None:
-        _LOGGER.warning("Home Assistant frontend component unavailable; sidebar panel not registered.")
-        return
+from homeassistant.components.panel_custom import async_register_panel
 
-    try:
-        frontend.async_remove_panel(PANEL_URL_PATH)
-    except Exception:
-        # Removing a panel that does not exist is safe to ignore.
-        pass
-
-    frontend.async_register_built_in_panel(
-        component_name="iframe",
-        sidebar_title=PANEL_TITLE,
-        sidebar_icon=PANEL_ICON,
-        frontend_url_path=PANEL_URL_PATH,
-        config={
-            "url": f"/local/{PANEL_TARGET_FOLDER}/index.html",
-            "require_admin": False,
-        },
-        require_admin=False,
+async def _register_sidebar_panel(hass: HomeAssistant) -> None:
+    async_register_panel(
+        hass,
+        webcomponent_name="ha-dashboard-persistence",
+        frontend_url_path="ha-dashboard-persistence",
+        module_url="/local/ha_dashboard_persistence/main.js",
+        sidebar_title="Dashboard Persistence",
+        sidebar_icon="mdi:database",
     )
-
-
-def _unregister_sidebar_panel(hass: HomeAssistant) -> None:
-    frontend = getattr(hass.components, "frontend", None)
-    if frontend is None:
-        return
-
-    try:
-        frontend.async_remove_panel(PANEL_URL_PATH)
-    except Exception:
-        pass
-
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -200,6 +175,7 @@ def _entry_floors(hass: HomeAssistant) -> list[dict[str, Any]]:
                 "name": str(source.get(CONF_SECOND_NAME, "Second Floor")).strip() or "Second Floor",
                 "model_path": second_model,
                 "y_offset": _safe_float(source.get(CONF_SECOND_Y_OFFSET, 4.8), 4.8),
+                "optional": True,
             }
         )
 
@@ -323,7 +299,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         payload = await _async_read_payload(hass)
         connection.send_result(msg["id"], payload)
 
-    hass.services.async_register(DOMAIN, "save", async_save_service, schema=SAVE_SERVICE_SCHEMA)
+    hass.services.async_register(DOMAIN, "save", async_save_service)
     hass.services.async_register(DOMAIN, "clear", async_clear_service)
 
     websocket_api.async_register_command(hass, ws_save)

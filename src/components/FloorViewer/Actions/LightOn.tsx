@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { EntityAttributesProps } from '@hakit/components';
+import type { EntityName } from '@hakit/core';
 
 export type LightEntityId = Extract<EntityAttributesProps['entity'], `light.${string}` | `switch.${string}`>;
 
@@ -13,7 +14,8 @@ interface LightOnProps {
 }
 
 function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
-  const light = useEntity(lightEntityId);
+  const light = useEntity(lightEntityId as EntityName) as
+    { state?: string; attributes?: { brightness?: number; hs_color?: [number, number] } } | undefined;
   const lightMesh = gltf.nodes[lightObjectName];
 
   const pointLight = useRef<THREE.PointLight>(null);
@@ -38,6 +40,7 @@ function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
   useFrame(() => {
     if (!ready) return;
     if (!pointLight.current) return;
+    if (!light) return;
 
     const isOn = light.state === 'on';
 
@@ -54,6 +57,20 @@ function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
     pointLight.current.intensity += (targetIntensity - pointLight.current.intensity) * 0.15;
     pointLight.current.color = new THREE.Color(targetColor);
   });
+
+  if (!lightMesh) {
+    console.warn(`[LightOn] Light mesh "${lightObjectName}" not found in GLTF.`);
+    return null;
+  }
+
+  if (!pointLight.current) {
+    console.warn('[LightOn] Point light reference is not set.');
+    return null;
+  }
+
+  if (!ready || !light) {
+    return null;
+  }
 
   return (
     <pointLight
