@@ -1,105 +1,150 @@
-## Prerequisites
-Node version manager - [NVM](https://github.com/nvm-sh/nvm) to easily install and manage node versions
+# HA Dashboard
 
-## Local Development
-Simply, run `nvm use && npm i && npm run dev` and it will start a local server for you to develop on, it will also watch for changes and reload the page for you. 
+Interactive 3D floor dashboard for Home Assistant with in-app object binding.
 
-## Dependencies
+## What End Users Do (No IDE Required)
 
-```json
-Node.js >=18.0.0
-npm >=7.0.0
-```
+1. Install the integration from HACS.
+2. Open integration options and set GLB paths for each floor.
+3. Open the auto-created `HA Dashboard` sidebar item.
+4. Click model objects and bind each object to Home Assistant entities.
+5. Bindings are saved in Home Assistant storage automatically.
 
-## Building
-Run `npm run build` and it will build the files for you, you can then upload them to your home assistant instance using the deploy script mentioned below.
+## Home Assistant User Setup
 
-## Deploy to Home Assistant via SSH
-1. Replace the values in the .env file provided with your `VITE_SSH_USERNAME`, `VITE_SSH_HOSTNAME` and `VITE_SSH_PASSWORD`.
-2. To automatically deploy to your home assistant instance, you can run `npm run deploy` after you've retrieved the SSH information specified [here](https://shannonhochkins.github.io/ha-component-kit/?path=/docs/introduction-deploying--docs), NOTE! The script has already been created for you, you just need to run it after you've updated the .env values.
-3. The `VITE_FOLDER_NAME` is the folder that will be created on your home assistant instance, this is where the files will be uploaded to.
+### 1) Install integration
 
-## Folder name & Vite
-The `VITE_FOLDER_NAME` is the folder that will be created on your home assistant instance, this is where the files will be uploaded to. If you change the `VITE_FOLDER_NAME` variable, it will also update the `vite.config.ts` value named `base` to the same value so that when deployed using the deployment script the pathname's are correct.
+Integration folder: `custom_components/ha_dashboard_persistence`
 
-## Typescript Sync
-
-1. Replace the values in the `.env` file provided with your own if the script hasn't handled this for you already
-2. The `VITE_HA_URL` should be a https url if you want to sync your types successfully.
-3. The `VITE_HA_TOKEN` instructions can be found [here](https://shannonhochkins.github.io/ha-component-kit/?path=/docs/introduction-typescriptsync--docs) under the pre-requisites section.
-
-Once you have both the above environment variables set, you can run `npm run sync` and it will create a file for you, you then just have to add it to the tsconfig.json.
-
-### HA TOKEN
-The token by default will only be used by local development and the sync-script, if you wish to have your token bundled with your project you can move the declaration in the `.env.development` file to the `.env` file, then remove the `.env.development` file as well as update the `scripts/sync-types.ts` file to remove the `.env.development` loader.
-
-## Further documentation
-For further documentation, please visit the [documentation website](https://shannonhochkins.github.io/ha-component-kit/) for more information.
-
-## Home Assistant Persistence Integration
-
-This repository includes an in-repo custom Home Assistant integration for persisting dashboard bindings:
-
-- Folder (HACS/manual install): `custom_components/ha_dashboard_persistence`
-- Domain: `ha_dashboard_persistence`
-
-### Install with HACS (Custom Repository)
-
-1. In Home Assistant, open HACS -> Integrations -> three-dot menu -> Custom repositories.
-2. Add this GitHub repository URL.
-3. Set category to `Integration`.
-4. Search/install `HA Dashboard Persistence` from HACS.
+HACS install:
+1. Home Assistant -> HACS -> Integrations -> three-dot menu -> Custom repositories.
+2. Add this repository URL.
+3. Category: `Integration`.
+4. Install `HA Dashboard Persistence`.
 5. Restart Home Assistant.
 
-### Manual install
-
-1. Copy `custom_components/ha_dashboard_persistence` to your HA config at `custom_components/ha_dashboard_persistence`.
+Manual install:
+1. Copy `custom_components/ha_dashboard_persistence` into your HA config folder.
 2. Restart Home Assistant.
-3. Use services or websocket commands provided by the integration to save/load bindings.
 
-For full details, see `homeassistant_integration/README.md`.
+### 2) Configure floor models in HA
 
-### GLB Upload Safety Plan
+Open the integration configuration/options and set:
+1. Ground floor name and `ground_model_path` (required).
+2. First floor name, `first_model_path` and `first_y_offset` (optional).
+3. Second floor name, `second_model_path` and `second_y_offset` (optional).
 
-To reduce frontend upload errors, the safest pattern is:
+Model paths should be Home Assistant web paths, for example:
 
-1. Upload GLB files to Home Assistant using existing HA file mechanisms (Samba/File Editor/SSH add-on).
-2. Keep this integration as the source of truth for model metadata (which model path/floor to use), not binary upload transport.
-3. Add integration services later to set and validate model paths before the frontend consumes them.
+`/local/ha-dashboard/models/ground-floor.glb`
 
-This keeps writes server-side and avoids fragile browser-based file handling for production.
+`/local/ha-dashboard/models/first-floor.glb`
 
+### 3) Upload GLB files to Home Assistant
 
+Upload your `.glb` files to `www` using Samba, SSH, File Editor, or another HA file workflow.
 
-# React + TypeScript + Vite
+Example filesystem location:
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+`<config>/www/ha-dashboard/models/`
 
-Currently, two official plugins are available:
+This maps to URL paths:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+`/local/ha-dashboard/models/...`
 
-## React Compiler
+### 4) Open dashboard frontend
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The integration automatically installs bundled frontend assets into Home Assistant `www` and registers a sidebar panel named `HA Dashboard`.
 
-## Expanding the Oxlint configuration
+Open that sidebar item. On startup it calls integration websocket bootstrap and reads floor config + bindings automatically.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+### 5) Bind objects to entities
+
+In the frontend popup:
+1. Select model part.
+2. Pick binding type (light, door, alarm, climate, presence).
+3. Pick target HA entity.
+4. Save.
+
+Bindings are persisted server-side via the integration.
+
+## Integration API Contract
+
+Domain: `ha_dashboard_persistence`
+
+Stored payload shape:
 
 ```json
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  "version": 1,
+  "bindings": [],
+  "floors": [
+    {
+      "id": "ground",
+      "name": "Ground Floor",
+      "model_path": "/local/ha-dashboard/models/ground-floor.glb",
+      "y_offset": 0
+    }
+  ]
 }
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Websocket commands:
+1. `ha_dashboard_persistence/bootstrap`
+2. `ha_dashboard_persistence/load`
+3. `ha_dashboard_persistence/save`
+4. `ha_dashboard_persistence/clear`
+
+Services:
+1. `ha_dashboard_persistence.save`
+2. `ha_dashboard_persistence.clear`
+
+Detailed integration docs are in `homeassistant_integration/README.md`.
+
+## Developer Setup
+
+Only needed if you are developing this repository.
+
+### Prerequisites
+
+1. Node.js >= 18
+2. npm >= 7
+3. NVM recommended: https://github.com/nvm-sh/nvm
+
+### Local development
+
+Run:
+
+`nvm use && npm i && npm run dev`
+
+### Build
+
+Run:
+
+`npm run build`
+
+### Build Release Artifact (Frontend + Integration)
+
+Run:
+
+`npm run build:release`
+
+This builds the frontend and copies `dist` into:
+
+1. `custom_components/ha_dashboard_persistence/panel_dist`
+2. `homeassistant_integration/custom_components/ha_dashboard_persistence/panel_dist`
+
+Those bundled assets are what the integration installs into Home Assistant `www` at runtime.
+
+### Deploy to Home Assistant via SSH
+
+1. Set `.env` values for `VITE_SSH_USERNAME`, `VITE_SSH_HOSTNAME`, and `VITE_SSH_PASSWORD`.
+2. Run `npm run deploy`.
+3. `VITE_FOLDER_NAME` controls deploy folder and Vite base path.
+
+### Type sync (privacy-safe)
+
+1. Set `VITE_HA_URL` and `VITE_HA_TOKEN` in local env files.
+2. Run `npm run sync`.
+3. Generated personal entity types are written to ignored `supported-types.local.d.ts`.
+4. Tracked `supported-types.d.ts` remains sanitized.

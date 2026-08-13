@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:release": "npm run build && npm run package:integration",
     "lint": "oxlint",
     "preview": "vite preview",
     "prettier": "prettier --write .",
+    "package:integration": "npx tsx scripts/package-integration.ts",
     "sync": "npx tsx scripts/sync-types.ts",
     "prebuild": "npm run prettier",
     "deploy": "npx tsx scripts/deploy.ts"
