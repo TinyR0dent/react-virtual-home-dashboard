@@ -1,0 +1,24 @@
+save:
+  name: Save dashboard bindings
+  description: Persist dashboard binding payload to Home Assistant storage.
+  fields:
+    version:
+      name: Payload version
+      description: Schema version number for the payload.
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 999
+          mode: box
+    bindings:
+      name: Bindings
+      description: List of dashboard bindings.
+      required: true
+      selector:
+        object: {}
+
+clear:
+  name: Clear dashboard bindings
+  description: Reset persisted dashboard bindings to the default empty payload.
