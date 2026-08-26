@@ -76,13 +76,10 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
 
     def _copy() -> None:
         target_dir.parent.mkdir(parents=True, exist_ok=True)
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        shutil.copytree(source_dir, target_dir)
+        shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
 
     await hass.async_add_executor_job(_copy)
 
-from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.components import frontend
 
 async def _register_sidebar_panel(hass: HomeAssistant) -> None:
@@ -98,7 +95,7 @@ async def _register_sidebar_panel(hass: HomeAssistant) -> None:
         sidebar_icon=PANEL_ICON,
         frontend_url_path=PANEL_URL_PATH,
         config={
-            "url": "/local/ha-dashboard/index.html",
+            "url": f"/local/{PANEL_TARGET_FOLDER}/index.html",
             "require_admin": False,
         },
         require_admin=False,
