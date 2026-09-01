@@ -77,12 +77,8 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
 
 from homeassistant.components import frontend
 
-async def _register_sidebar_panel(hass: HomeAssistant) -> None:
-    try:
-        frontend.async_remove_panel(PANEL_URL_PATH)
-    except Exception:
-        pass
 
+def _register_sidebar_panel_once(hass: HomeAssistant) -> None:
     frontend.async_register_built_in_panel(
         hass,
         component_name="iframe",
@@ -95,6 +91,27 @@ async def _register_sidebar_panel(hass: HomeAssistant) -> None:
         },
         require_admin=False,
     )
+
+
+async def _register_sidebar_panel(hass: HomeAssistant) -> None:
+    try:
+        frontend.async_remove_panel(PANEL_URL_PATH)
+    except Exception:
+        pass
+
+    try:
+        _register_sidebar_panel_once(hass)
+    except ValueError as err:
+        if f"Overwriting panel {PANEL_URL_PATH}" not in str(err):
+            raise
+
+        # During reloads Home Assistant can still retain the existing panel.
+        _LOGGER.warning("Panel %s already registered, retrying registration", PANEL_URL_PATH)
+        try:
+            frontend.async_remove_panel(PANEL_URL_PATH)
+        except Exception:
+            pass
+        _register_sidebar_panel_once(hass)
 
 
 def _unregister_sidebar_panel(hass: HomeAssistant) -> None:

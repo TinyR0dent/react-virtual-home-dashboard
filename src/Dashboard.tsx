@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useHass } from '@hakit/core';
 import { FloorStackViewer } from './components/FloorViewer';
 import type { FloorModelConfig } from './components/FloorViewer';
@@ -15,6 +15,37 @@ interface FloorBootstrapItem {
 
 interface BootstrapPayload {
   floors?: FloorBootstrapItem[];
+}
+
+interface ViewerErrorBoundaryProps {
+  children: ReactNode;
+  onError: (error: unknown) => void;
+}
+
+interface ViewerErrorBoundaryState {
+  hasError: boolean;
+}
+
+class ViewerErrorBoundary extends Component<ViewerErrorBoundaryProps, ViewerErrorBoundaryState> {
+  state: ViewerErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(_: unknown): ViewerErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    this.props.onError(error);
+  }
+
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function withBuildId(url: string): string {
@@ -85,6 +116,7 @@ function Dashboard() {
 
   const [floors, setFloors] = useState<FloorModelConfig[]>(fallbackFloors);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [uiFatalError, setUiFatalError] = useState<string | null>(null);
 
   const isLocalHost =
     typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -140,6 +172,30 @@ function Dashboard() {
     };
   }, [connection, isLocalHost]);
 
+  useEffect(() => {
+    const onWindowError = (event: ErrorEvent) => {
+      const message = event.error ? formatUnknownError(event.error) : event.message;
+      if (!message) return;
+      if (!message.includes('Could not load') && !message.includes('.glb')) return;
+      setUiFatalError(message);
+    };
+
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const message = formatUnknownError(event.reason);
+      if (!message) return;
+      if (!message.includes('Could not load') && !message.includes('.glb')) return;
+      setUiFatalError(message);
+    };
+
+    window.addEventListener('error', onWindowError);
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+
+    return () => {
+      window.removeEventListener('error', onWindowError);
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    };
+  }, []);
+
   const canRender = useMemo(() => floors.length > 0 && floors.every(floor => Boolean(floor.modelUrl)), [floors]);
 
   if (isBootstrapping) {
@@ -154,7 +210,62 @@ function Dashboard() {
     );
   }
 
-  return <FloorStackViewer floors={floors} />;
+  if (uiFatalError) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          width: '100%',
+          padding: 20,
+          boxSizing: 'border-box',
+          background: 'linear-gradient(160deg, #0c1d3c 0%, #142f5f 46%, #1a3f74 100%)',
+          color: '#eaf2ff',
+          fontFamily: 'system-ui, -apple-system, Segoe UI, sans-serif',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 960,
+            margin: '0 auto',
+            background: 'rgba(8, 17, 34, 0.72)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 12,
+            padding: 16,
+          }}
+        >
+          <h2 style={{ margin: '0 0 8px 0', fontSize: 18 }}>Unable to load floor model</h2>
+          <p style={{ margin: '0 0 10px 0', color: 'rgba(234,242,255,0.9)', fontSize: 13 }}>
+            Check that model paths in integration options use /local/... and that files exist in /config/www.
+          </p>
+          <pre
+            style={{
+              margin: 0,
+              padding: 10,
+              borderRadius: 8,
+              overflowX: 'auto',
+              whiteSpace: 'pre-wrap',
+              background: 'rgba(0,0,0,0.35)',
+              border: '1px solid rgba(255,255,255,0.14)',
+              color: '#ffdcdc',
+              fontSize: 12,
+            }}
+          >
+            {uiFatalError}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ViewerErrorBoundary
+      onError={error => {
+        setUiFatalError(formatUnknownError(error));
+      }}
+    >
+      <FloorStackViewer floors={floors} />
+    </ViewerErrorBoundary>
+  );
 }
 
 export default Dashboard;
