@@ -459,11 +459,17 @@ function CameraResetter({
   return null;
 }
 
-class FloorErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+class FloorErrorBoundary extends Component<
+  { children: ReactNode; modelUrl: string; onModelError: (modelUrl: string, error: unknown) => void },
+  { failed: boolean }
+> {
   state = { failed: false };
   static getDerivedStateFromError(err: unknown) {
     console.warn('[FloorStack] Floor model failed to load:', err);
     return { failed: true };
+  }
+  componentDidCatch(error: unknown) {
+    this.props.onModelError(this.props.modelUrl, error);
   }
   render() {
     return this.state.failed ? null : this.props.children;
@@ -1171,6 +1177,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
   const [allRegistryEntityIds, setAllRegistryEntityIds] = useState<string[]>([]);
   const [allEntityIds, setAllEntityIds] = useState<string[]>([]);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [modelLoadErrors, setModelLoadErrors] = useState<Record<string, string>>({});
   const [activeFloorIndex, setActiveFloorIndex] = useState(() => {
     const settings = loadViewerLightingSettings();
     return Math.max(0, Math.min(maxFloorIndex, settings.defaultFloorIndex ?? 0));
@@ -1284,6 +1291,19 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
   useEffect(() => {
     saveBindingsToStorage(bindings);
   }, [bindings]);
+
+  useEffect(() => {
+    const knownUrls = new Set(floors.map(floor => floor.modelUrl));
+    setModelLoadErrors(prev => {
+      const next: Record<string, string> = {};
+      for (const [url, message] of Object.entries(prev)) {
+        if (knownUrls.has(url)) {
+          next[url] = message;
+        }
+      }
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+  }, [floors]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1573,6 +1593,14 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     });
   }, [persistRemoteState]);
 
+  const handleModelLoadError = useCallback((modelUrl: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    setModelLoadErrors(prev => {
+      if (prev[modelUrl] === message) return prev;
+      return { ...prev, [modelUrl]: message };
+    });
+  }, []);
+
   const resolveBindingFromCandidates = useCallback(
     (partName: string, candidatePartNames: string[]) => {
       const normalizedChain = [partName, ...candidatePartNames]
@@ -1787,7 +1815,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
                 <Environment preset='apartment' background={false} environmentIntensity={sceneLighting.environmentIntensity} />
 
                 {renderedFloors.map((floor, i) => (
-                  <FloorErrorBoundary key={`${i}-${floor.modelUrl}`}>
+                  <FloorErrorBoundary key={`${i}-${floor.modelUrl}`} modelUrl={floor.modelUrl} onModelError={handleModelLoadError}>
                     <InteractiveFloor
                       url={floor.modelUrl}
                       finalY={floor.yOffset}
@@ -1939,6 +1967,49 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
         )}
 
         <ControlsHint />
+
+        {Object.keys(modelLoadErrors).length > 0 && (
+          <div
+            role='alert'
+            style={{
+              position: 'fixed',
+              left: 14,
+              bottom: 74,
+              zIndex: 240,
+              width: 'min(860px, calc(100vw - 28px))',
+              maxHeight: '42vh',
+              overflow: 'auto',
+              border: '1px solid rgba(255, 140, 140, 0.45)',
+              borderRadius: 10,
+              background: 'rgba(43, 9, 9, 0.92)',
+              color: '#ffe7e7',
+              padding: '10px 12px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+              backdropFilter: 'blur(7px)',
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>One or more floor models failed to load.</div>
+            <div style={{ fontSize: 12, marginBottom: 8, color: 'rgba(255, 230, 230, 0.9)' }}>
+              Verify the file path exists in Home Assistant under /www and is referenced as /local/... in integration settings.
+            </div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {Object.entries(modelLoadErrors).map(([url, message]) => (
+                <div
+                  key={url}
+                  style={{
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    background: 'rgba(0,0,0,0.26)',
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: 'rgba(255, 210, 210, 0.95)', wordBreak: 'break-all' }}>{url}</div>
+                  <div style={{ fontSize: 11, color: 'rgba(255, 239, 239, 0.85)', marginTop: 4, wordBreak: 'break-word' }}>{message}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <ObjectConfigPopup

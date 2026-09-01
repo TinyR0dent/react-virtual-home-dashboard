@@ -22,8 +22,29 @@ function withBuildId(url: string): string {
   return url.includes('?') ? `${url}&v=${buildId}` : `${url}?v=${buildId}`;
 }
 
+function normalizeHaModelPath(rawPath: string): string {
+  const path = rawPath.trim();
+  if (!path) return path;
+
+  // Accept Home Assistant filesystem-like paths and map them to HTTP /local/*.
+  if (path.startsWith('/config/www/')) {
+    return `/local/${path.slice('/config/www/'.length)}`;
+  }
+  if (path.startsWith('config/www/')) {
+    return `/local/${path.slice('config/www/'.length)}`;
+  }
+  if (path.startsWith('/www/')) {
+    return `/local/${path.slice('/www/'.length)}`;
+  }
+  if (path.startsWith('www/')) {
+    return `/local/${path.slice('www/'.length)}`;
+  }
+
+  return path;
+}
+
 function resolveModelUrl(rawUrl: string): string {
-  const modelUrl = rawUrl.trim();
+  const modelUrl = normalizeHaModelPath(rawUrl);
   if (!modelUrl) return modelUrl;
 
   const isLocalHost =
