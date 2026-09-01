@@ -4,21 +4,14 @@ import react from '@vitejs/plugin-react';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const VITE_FOLDER_NAME = process.env.VITE_FOLDER_NAME;
-
-// Check if the environment variable is set
-if (typeof VITE_FOLDER_NAME === 'undefined' || VITE_FOLDER_NAME === '') {
-  console.error(
-    'VITE_FOLDER_NAME environment variable is not set, update your .env file with a value naming your dashboard, eg "VITE_FOLDER_NAME=ha-dashboard"'
-  );
-  process.exit(1);
-}
+const folderName = process.env.VITE_FOLDER_NAME?.trim() || 'ha-dashboard';
 
 // https://vite.dev/config/
-export default defineConfig({
-  base: `/local/${VITE_FOLDER_NAME}/`,
+export default defineConfig(({ command }) => ({
+  // Local dev should serve from root so /public fallback model URLs work out of the box.
+  base: command === 'build' ? `/local/${folderName}/` : '/',
   define: {
     'import.meta.env.VITE_BUILD_ID': JSON.stringify(`${Date.now()}`),
   },
   plugins: [react()],
-});
+}));

@@ -1,4 +1,4 @@
-import { Component, Suspense, useRef, useCallback, useState, useEffect, type ReactNode } from 'react';
+import { Component, Suspense, useRef, useCallback, useState, useEffect, useMemo, type MutableRefObject, type ReactNode } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Html } from '@react-three/drei';
 import { useHass } from '@hakit/core';
@@ -7,6 +7,14 @@ import DoorOpen from './Actions/DoorOpen';
 import LightOn from './Actions/LightOn';
 import RoomPresence from './Actions/RoomPresence';
 import { ObjectConfigPopup, type ObjectConfigPopupProps } from '../ui-components/ObjectConfigPopup';
+import {
+  loadViewerLightingSettings,
+  mapAmbientLevelToSceneLighting,
+  saveViewerLightingSettings,
+  VIEWER_LIGHTING_CHANGED_EVENT,
+  VIEWER_LIGHTING_STORAGE_KEY,
+  type ViewerLightingSettings,
+} from './lighting';
 import {
   defaultCameraPositions,
   loadBindingsFromStorage,
@@ -99,17 +107,51 @@ function ControlsHint() {
   );
 }
 
-function GroundFloor({
+function InteractiveFloor({
   url,
+  finalY,
+  startY,
+  progress,
+  revealStart,
+  revealEnd,
   bindings,
   onModelPartClick,
 }: {
   url: string;
+  finalY: number;
+  startY: number;
+  progress: { value: number };
+  revealStart: number;
+  revealEnd: number;
   bindings: ModelBinding[];
   onModelPartClick: (partName: string) => void;
 }) {
   const gltf = useGLTF(url);
+  const floorGltf = useMemo(() => ({ ...gltf, scene: gltf.scene.clone(true) }), [gltf]);
+  const floorNodes = useMemo(() => {
+    const nodes: Record<string, THREE.Object3D> = {};
+    floorGltf.scene.traverse(object => {
+      if (!object.name) return;
+      if (nodes[object.name]) return;
+      nodes[object.name] = object;
+    });
+    return nodes;
+  }, [floorGltf]);
+  const actionGltf = useMemo(() => ({ ...floorGltf, nodes: floorNodes }), [floorGltf, floorNodes]);
+  const groupRef = useRef<THREE.Group>(null);
   const hoveredGroupRef = useRef<THREE.Object3D | null>(null);
+
+  useFrame(() => {
+    if (groupRef.current) {
+      if (revealEnd <= revealStart) {
+        groupRef.current.position.y = finalY;
+        return;
+      }
+
+      const t = THREE.MathUtils.clamp((progress.value - revealStart) / (revealEnd - revealStart), 0, 1);
+      groupRef.current.position.y = THREE.MathUtils.lerp(startY, finalY, t);
+    }
+  });
 
   const doorBindings = bindings.filter((binding): binding is DoorBinding => binding.type === 'door');
   const lightBindings = bindings.filter((binding): binding is LightBinding => binding.type === 'light');
@@ -247,7 +289,7 @@ function GroundFloor({
       {doorBindings.map(binding => (
         <DoorOpen
           key={`door-${binding.modelPartName}`}
-          gltf={gltf}
+          gltf={actionGltf}
           sensorId={binding.haEntity}
           doorName={binding.modelPartName}
           direction={binding.direction}
@@ -258,30 +300,54 @@ function GroundFloor({
       {lightBindings.map(binding => (
         <LightOn
           key={`light-${binding.modelPartName}`}
-          gltf={gltf}
+          gltf={actionGltf}
           lightEntityId={binding.haEntity}
           lightObjectName={binding.modelPartName}
         />
       ))}
 
       {presenceBindings.map(binding => (
-        <RoomPresence key={`presence-${binding.modelPartName}`} gltf={gltf} sensorId={binding.haEntity} floorName={binding.modelPartName} />
+        <RoomPresence
+          key={`presence-${binding.modelPartName}`}
+          gltf={actionGltf}
+          sensorId={binding.haEntity}
+          floorName={binding.modelPartName}
+        />
       ))}
 
-      <primitive
-        object={gltf.scene}
-        dispose={null}
-        onClick={handlePartClick}
-        onPointerOver={handlePartHover}
-        onPointerMove={handlePartHover}
-        onPointerOut={clearHighlight}
-      />
+      <group ref={groupRef}>
+        <primitive
+          object={floorGltf.scene}
+          dispose={null}
+          onClick={handlePartClick}
+          onPointerOver={handlePartHover}
+          onPointerMove={handlePartHover}
+          onPointerOut={clearHighlight}
+        />
+      </group>
     </>
   );
 }
 
-function CameraResetter({ cameraPosition, resetRef }: { cameraPosition: [number, number, number]; resetRef: { reset: () => void } }) {
+function CameraResetter({
+  cameraPosition,
+  resetRef,
+  onMovedChange,
+  cameraPositionRef,
+}: {
+  cameraPosition: [number, number, number];
+  resetRef: { reset: () => void };
+  onMovedChange: (moved: boolean) => void;
+  cameraPositionRef: MutableRefObject<[number, number, number]>;
+}) {
   const { camera, controls } = useThree();
+
+  useFrame(() => {
+    cameraPositionRef.current = [camera.position.x, camera.position.y, camera.position.z];
+    const moved = camera.position.distanceTo(new THREE.Vector3(...cameraPosition)) > 0.2;
+    onMovedChange(moved);
+  });
+
   resetRef.reset = () => {
     camera.position.set(...cameraPosition);
     const ctrl = controls as unknown as { target: THREE.Vector3; update: () => void } | undefined;
@@ -291,30 +357,6 @@ function CameraResetter({ cameraPosition, resetRef }: { cameraPosition: [number,
     }
   };
   return null;
-}
-
-interface AnimatedFloorProps {
-  url: string;
-  finalY: number;
-  startY: number;
-  progress: { value: number };
-}
-
-function AnimatedFloor({ url, finalY, startY, progress }: AnimatedFloorProps) {
-  const groupRef = useRef<THREE.Group>(null);
-  const { scene } = useGLTF(url);
-
-  useFrame(() => {
-    if (groupRef.current) {
-      groupRef.current.position.y = THREE.MathUtils.lerp(startY, finalY, progress.value);
-    }
-  });
-
-  return (
-    <group ref={groupRef}>
-      <primitive object={scene} dispose={null} />
-    </group>
-  );
 }
 
 class FloorErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -345,7 +387,19 @@ function Loader() {
   );
 }
 
-function ScrollIndicator({ progress, onSeek, onReset }: { progress: number; onSeek: (p: number) => void; onReset: () => void }) {
+function ScrollIndicator({
+  progress,
+  floorCount,
+  activeFloorIndex,
+  onSeekIndex,
+  onReset,
+}: {
+  progress: number;
+  floorCount: number;
+  activeFloorIndex: number;
+  onSeekIndex: (index: number) => void;
+  onReset: () => void;
+}) {
   const trackRef = useRef<HTMLDivElement>(null);
 
   const seekFromPointer = (e: React.PointerEvent) => {
@@ -353,7 +407,9 @@ function ScrollIndicator({ progress, onSeek, onReset }: { progress: number; onSe
     if (!track) return;
     const rect = track.getBoundingClientRect();
     const p = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
-    onSeek(p);
+    const maxIndex = Math.max(0, floorCount - 1);
+    const index = maxIndex === 0 ? 0 : Math.round(p * maxIndex);
+    onSeekIndex(index);
   };
 
   const btnStyle: React.CSSProperties = {
@@ -390,8 +446,13 @@ function ScrollIndicator({ progress, onSeek, onReset }: { progress: number; onSe
         userSelect: 'none',
       }}
     >
-      <button style={btnStyle} aria-label='First floor' onClick={() => onSeek(1)}>
-        ?
+      <button
+        style={btnStyle}
+        aria-label='Next floor'
+        onClick={() => onSeekIndex(Math.min(floorCount - 1, activeFloorIndex + 1))}
+        disabled={activeFloorIndex >= floorCount - 1}
+      >
+        +
       </button>
 
       <div
@@ -438,37 +499,148 @@ function ScrollIndicator({ progress, onSeek, onReset }: { progress: number; onSe
         />
       </div>
 
-      <button style={btnStyle} aria-label='Ground floor' onClick={() => onSeek(0)}>
-        ?
+      <button
+        style={btnStyle}
+        aria-label='Previous floor'
+        onClick={() => onSeekIndex(Math.max(0, activeFloorIndex - 1))}
+        disabled={activeFloorIndex <= 0}
+      >
+        -
       </button>
 
       <button style={{ ...btnStyle, marginTop: 4, fontSize: 18 }} aria-label='Reset camera' onClick={onReset} title='Reset camera'>
-        ?
+        R
       </button>
     </div>
   );
 }
 
-export { type FloorStackViewerProps, type UpperFloorConfig, defaultCameraPositions } from './bindings';
+export { type FloorModelConfig, type FloorStackViewerProps, defaultCameraPositions } from './bindings';
 
-export function FloorStackViewer({
-  groundFloorUrl,
-  upperFloors,
-  startY = 40,
-  cameraPosition = defaultCameraPositions[0].isometric,
-}: FloorStackViewerProps) {
+export function FloorStackViewer({ floors, startY = 40, cameraPosition = defaultCameraPositions[0].isometric }: FloorStackViewerProps) {
   const connection = useHass(state => state.connection) as {
     sendMessagePromise: (message: Record<string, unknown>) => Promise<unknown>;
   } | null;
   const scrollRef = useRef<HTMLDivElement>(null);
   const resetRef = useRef<{ reset: () => void }>({ reset: () => {} }).current;
 
+  const floorCount = Math.max(1, floors.length);
+  const maxFloorIndex = Math.max(0, floorCount - 1);
+  const isMobileDevice = typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
   const [bindings, setBindings] = useState<ModelBinding[]>(() => loadBindingsFromStorage());
   const [hasLoadedRemote, setHasLoadedRemote] = useState(false);
   const [selectedModelPartName, setSelectedModelPartName] = useState<string | null>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [activeFloorIndex, setActiveFloorIndex] = useState(() => {
+    const settings = loadViewerLightingSettings();
+    return Math.max(0, Math.min(maxFloorIndex, settings.defaultFloorIndex ?? 0));
+  });
+  const [lightingSettings, setLightingSettings] = useState<ViewerLightingSettings>(() => loadViewerLightingSettings());
+  const [hasMovedCamera, setHasMovedCamera] = useState(false);
+  const [loadedFloorCount, setLoadedFloorCount] = useState<number>(() => {
+    const settings = loadViewerLightingSettings();
+    const defaultFloorIndex = Math.max(0, Math.min(maxFloorIndex, settings.defaultFloorIndex ?? 0));
+    if (!isMobileDevice) return floorCount;
+    // Keep initial mobile decode light but include adjacent floor to preserve reveal animations.
+    return Math.max(1, Math.min(floorCount, defaultFloorIndex + 2));
+  });
 
   const progress = useRef<{ value: number }>({ value: 0 }).current;
+  const activeFloorIndexRef = useRef(0);
+  const programmaticSeekRef = useRef(false);
+  const seekRafRef = useRef<number | null>(null);
+  const currentCameraPositionRef = useRef<[number, number, number]>(cameraPosition);
+  const sceneLighting = useMemo(() => mapAmbientLevelToSceneLighting(lightingSettings.ambientLevel), [lightingSettings.ambientLevel]);
+  const renderedFloors = useMemo(() => floors.slice(0, loadedFloorCount), [floors, loadedFloorCount]);
+  const resolvedCameraPosition = useMemo<[number, number, number]>(() => {
+    return lightingSettings.defaultCameraPosition ?? cameraPosition;
+  }, [lightingSettings.defaultCameraPosition, cameraPosition]);
+
+  const defaultFloorIndex = useMemo(
+    () => Math.max(0, Math.min(maxFloorIndex, lightingSettings.defaultFloorIndex ?? 0)),
+    [lightingSettings.defaultFloorIndex, maxFloorIndex]
+  );
+
+  const ensureFloorLoaded = useCallback(
+    (index: number) => {
+      const targetCount = Math.max(1, Math.min(floorCount, index + 1));
+      setLoadedFloorCount(current => (current >= targetCount ? current : targetCount));
+    },
+    [floorCount]
+  );
+
+  useEffect(() => {
+    const minimumLoaded = isMobileDevice ? Math.min(floorCount, defaultFloorIndex + 2) : floorCount;
+    setLoadedFloorCount(current => {
+      const bounded = Math.max(1, Math.min(current, floorCount));
+      return Math.max(minimumLoaded, bounded);
+    });
+  }, [defaultFloorIndex, floorCount, isMobileDevice]);
+
+  useEffect(() => {
+    const targetIndex = defaultFloorIndex;
+    ensureFloorLoaded(targetIndex);
+    setActiveFloorIndex(targetIndex);
+
+    const progressValue = maxFloorIndex === 0 ? 0 : targetIndex / maxFloorIndex;
+    progress.value = progressValue;
+    setScrollProgress(progressValue);
+
+    const el = scrollRef.current;
+    if (!el) return;
+    const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
+    programmaticSeekRef.current = true;
+    el.scrollTo({ top: progressValue * maxScrollable, behavior: 'auto' });
+    window.setTimeout(() => {
+      programmaticSeekRef.current = false;
+    }, 0);
+  }, [defaultFloorIndex, ensureFloorLoaded, maxFloorIndex, progress]);
+
+  useEffect(() => {
+    return () => {
+      if (seekRafRef.current !== null) {
+        cancelAnimationFrame(seekRafRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextFloor = floors[loadedFloorCount];
+    if (!nextFloor) return;
+
+    const preloadId = window.setTimeout(() => {
+      useGLTF.preload(nextFloor.modelUrl);
+    }, 140);
+
+    return () => window.clearTimeout(preloadId);
+  }, [floors, loadedFloorCount]);
+
+  useEffect(() => {
+    activeFloorIndexRef.current = activeFloorIndex;
+  }, [activeFloorIndex]);
+
+  useEffect(() => {
+    const onLightingChanged = (event: Event) => {
+      const customEvent = event as CustomEvent<ViewerLightingSettings>;
+      if (customEvent.detail) {
+        setLightingSettings(customEvent.detail);
+      }
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== VIEWER_LIGHTING_STORAGE_KEY) return;
+      setLightingSettings(loadViewerLightingSettings());
+    };
+
+    window.addEventListener(VIEWER_LIGHTING_CHANGED_EVENT, onLightingChanged as EventListener);
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      window.removeEventListener(VIEWER_LIGHTING_CHANGED_EVENT, onLightingChanged as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   useEffect(() => {
     saveBindingsToStorage(bindings);
@@ -486,7 +658,10 @@ export function FloorStackViewer({
       try {
         const result = (await connection.sendMessagePromise({
           type: 'ha_dashboard_persistence/load',
-        })) as { bindings?: unknown };
+        })) as {
+          bindings?: unknown;
+          global_config?: { ambient_level?: unknown; default_floor_index?: unknown; default_camera_position?: unknown };
+        };
 
         if (cancelled) return;
 
@@ -495,6 +670,27 @@ export function FloorStackViewer({
             setBindings(result.bindings as ModelBinding[]);
           }
         }
+
+        const ambientLevel = Number(result?.global_config?.ambient_level);
+        const configuredDefaultFloorIndex = Number(result?.global_config?.default_floor_index);
+        const configuredCameraPosition = result?.global_config?.default_camera_position;
+        const isValidCameraPosition =
+          Array.isArray(configuredCameraPosition) &&
+          configuredCameraPosition.length === 3 &&
+          configuredCameraPosition.every(value => Number.isFinite(Number(value)));
+        setLightingSettings(prev => {
+          const next: ViewerLightingSettings = {
+            ambientLevel: Number.isFinite(ambientLevel) ? Math.max(0, Math.min(100, Math.round(ambientLevel))) : prev.ambientLevel,
+            defaultFloorIndex: Number.isFinite(configuredDefaultFloorIndex)
+              ? Math.max(0, Math.min(2, Math.round(configuredDefaultFloorIndex)))
+              : prev.defaultFloorIndex,
+            defaultCameraPosition: isValidCameraPosition
+              ? [Number(configuredCameraPosition[0]), Number(configuredCameraPosition[1]), Number(configuredCameraPosition[2])]
+              : prev.defaultCameraPosition,
+          };
+          saveViewerLightingSettings(next);
+          return next;
+        });
       } catch {
         // Integration may not be installed yet; keep local fallback silently.
       } finally {
@@ -519,27 +715,91 @@ export function FloorStackViewer({
         type: 'ha_dashboard_persistence/save',
         version: 1,
         bindings,
+        global_config: {
+          ambient_level: lightingSettings.ambientLevel,
+          default_floor_index: lightingSettings.defaultFloorIndex,
+          default_camera_position: lightingSettings.defaultCameraPosition,
+        },
       })
       .catch(() => {
         // Keep local storage as fallback if remote save fails.
       });
-  }, [bindings, connection, hasLoadedRemote]);
+  }, [
+    bindings,
+    connection,
+    hasLoadedRemote,
+    lightingSettings.ambientLevel,
+    lightingSettings.defaultCameraPosition,
+    lightingSettings.defaultFloorIndex,
+  ]);
 
   const onScroll = useCallback(() => {
+    if (programmaticSeekRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
-    const p = Math.max(0, Math.min(1, el.scrollTop / (el.scrollHeight - el.clientHeight)));
+    const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
+    const p = maxScrollable === 0 ? 0 : Math.max(0, Math.min(1, el.scrollTop / maxScrollable));
     progress.value = p;
     setScrollProgress(p);
-  }, [progress]);
+    const index = maxFloorIndex === 0 ? 0 : Math.round(p * maxFloorIndex);
+    setActiveFloorIndex(index);
+  }, [maxFloorIndex, progress]);
 
-  const onSeek = useCallback((p: number) => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({
-      top: p * (el.scrollHeight - el.clientHeight),
-      behavior: 'smooth',
+  const onSeekIndex = useCallback(
+    (index: number) => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const clampedIndex = Math.max(0, Math.min(maxFloorIndex, index));
+      ensureFloorLoaded(clampedIndex);
+      const targetProgress = maxFloorIndex === 0 ? 0 : clampedIndex / maxFloorIndex;
+      const startProgress = progress.value;
+      const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
+
+      if (seekRafRef.current !== null) {
+        cancelAnimationFrame(seekRafRef.current);
+      }
+
+      programmaticSeekRef.current = true;
+      const durationMs = 260;
+      const startTime = performance.now();
+
+      const animate = (now: number) => {
+        const t = Math.max(0, Math.min(1, (now - startTime) / durationMs));
+        const eased = 1 - Math.pow(1 - t, 3);
+        const nextProgress = THREE.MathUtils.lerp(startProgress, targetProgress, eased);
+
+        progress.value = nextProgress;
+        setScrollProgress(nextProgress);
+        const liveIndex = maxFloorIndex === 0 ? 0 : Math.round(nextProgress * maxFloorIndex);
+        setActiveFloorIndex(liveIndex);
+        el.scrollTop = nextProgress * maxScrollable;
+
+        if (t < 1) {
+          seekRafRef.current = requestAnimationFrame(animate);
+          return;
+        }
+
+        programmaticSeekRef.current = false;
+        setActiveFloorIndex(clampedIndex);
+        seekRafRef.current = null;
+      };
+
+      seekRafRef.current = requestAnimationFrame(animate);
+    },
+    [ensureFloorLoaded, maxFloorIndex, progress]
+  );
+
+  const handleSetDefaultCameraView = useCallback(() => {
+    const nextPosition = currentCameraPositionRef.current;
+    setLightingSettings(prev => {
+      const next: ViewerLightingSettings = {
+        ...prev,
+        defaultCameraPosition: [nextPosition[0], nextPosition[1], nextPosition[2]],
+      };
+      saveViewerLightingSettings(next);
+      return next;
     });
+    setHasMovedCamera(false);
   }, []);
 
   const handleReset = useCallback(() => {
@@ -567,14 +827,12 @@ export function FloorStackViewer({
       if (!e.shiftKey) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const el = scrollRef.current;
-      if (!el) return;
-      const max = el.scrollHeight - el.clientHeight;
-      el.scrollTo({ top: e.deltaY > 0 ? max : 0, behavior: 'smooth' });
+      const direction = e.deltaY > 0 ? 1 : -1;
+      onSeekIndex(activeFloorIndexRef.current + direction);
     };
     window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     return () => window.removeEventListener('wheel', onWheel, { capture: true });
-  }, []);
+  }, [onSeekIndex]);
 
   return (
     <>
@@ -599,28 +857,40 @@ export function FloorStackViewer({
         >
           <div style={{ height: '100svh' }}>
             <Canvas
-              camera={{ position: cameraPosition, fov: 45 }}
+              camera={{ position: resolvedCameraPosition, fov: 45 }}
               shadows
               style={{ touchAction: 'pan-y' }}
               gl={{
                 antialias: true,
                 toneMapping: THREE.ACESFilmicToneMapping,
-                toneMappingExposure: 1.1,
+                toneMappingExposure: sceneLighting.exposure,
               }}
             >
               <color attach='background' args={['#0d1117']} />
 
               <Suspense fallback={<Loader />}>
-                <Environment preset='apartment' background={false} environmentIntensity={0.2} />
+                <Environment preset='apartment' background={false} environmentIntensity={sceneLighting.environmentIntensity} />
 
-                <GroundFloor url={groundFloorUrl} bindings={bindings} onModelPartClick={partName => setSelectedModelPartName(partName)} />
-                <CameraResetter cameraPosition={cameraPosition} resetRef={resetRef} />
-
-                {upperFloors.map((floor, i) => (
-                  <FloorErrorBoundary key={i}>
-                    <AnimatedFloor url={floor.modelUrl} finalY={floor.yOffset} startY={startY} progress={progress} />
+                {renderedFloors.map((floor, i) => (
+                  <FloorErrorBoundary key={`${i}-${floor.modelUrl}`}>
+                    <InteractiveFloor
+                      url={floor.modelUrl}
+                      finalY={floor.yOffset}
+                      startY={startY}
+                      progress={progress}
+                      revealStart={i === 0 || maxFloorIndex === 0 ? 0 : (i - 1) / maxFloorIndex}
+                      revealEnd={i === 0 || maxFloorIndex === 0 ? 0 : i / maxFloorIndex}
+                      bindings={bindings}
+                      onModelPartClick={partName => setSelectedModelPartName(partName)}
+                    />
                   </FloorErrorBoundary>
                 ))}
+                <CameraResetter
+                  cameraPosition={resolvedCameraPosition}
+                  resetRef={resetRef}
+                  onMovedChange={setHasMovedCamera}
+                  cameraPositionRef={currentCameraPositionRef}
+                />
               </Suspense>
 
               <OrbitControls
@@ -639,27 +909,50 @@ export function FloorStackViewer({
           </div>
         </div>
 
-        <div
-          aria-hidden='true'
-          style={{
-            height: '100svh',
-            scrollSnapAlign: 'start',
-            scrollSnapStop: 'always',
-            pointerEvents: 'none',
-          }}
+        {Array.from({ length: floorCount }, (_, index) => (
+          <div
+            key={index}
+            aria-hidden='true'
+            style={{
+              height: '100svh',
+              scrollSnapAlign: 'start',
+              scrollSnapStop: 'always',
+              pointerEvents: 'none',
+            }}
+          />
+        ))}
+
+        <ScrollIndicator
+          progress={scrollProgress}
+          floorCount={floorCount}
+          activeFloorIndex={activeFloorIndex}
+          onSeekIndex={onSeekIndex}
+          onReset={handleReset}
         />
 
-        <div
-          aria-hidden='true'
-          style={{
-            height: '100svh',
-            scrollSnapAlign: 'start',
-            scrollSnapStop: 'always',
-            pointerEvents: 'none',
-          }}
-        />
+        {hasMovedCamera && (
+          <button
+            type='button'
+            onClick={handleSetDefaultCameraView}
+            style={{
+              position: 'fixed',
+              right: 64,
+              bottom: 84,
+              zIndex: 210,
+              border: '1px solid rgba(255,255,255,0.24)',
+              borderRadius: 10,
+              background: 'rgba(10,14,18,0.78)',
+              color: 'rgba(255,255,255,0.92)',
+              padding: '8px 12px',
+              fontSize: 12,
+              cursor: 'pointer',
+              backdropFilter: 'blur(8px)',
+            }}
+          >
+            Set Default Camera View
+          </button>
+        )}
 
-        <ScrollIndicator progress={scrollProgress} onSeek={onSeek} onReset={handleReset} />
         <ControlsHint />
       </div>
 

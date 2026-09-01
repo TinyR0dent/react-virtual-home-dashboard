@@ -13,16 +13,10 @@ from homeassistant.helpers.storage import Store
 import voluptuous as vol
 
 from .const import (
-    CONF_FIRST_MODEL_PATH,
-    CONF_FIRST_NAME,
-    CONF_FIRST_Y_OFFSET,
-    CONF_GROUND_MODEL_PATH,
-    CONF_GROUND_NAME,
-    CONF_SECOND_MODEL_PATH,
-    CONF_SECOND_NAME,
-    CONF_SECOND_Y_OFFSET,
     DEFAULT_PAYLOAD,
     DOMAIN,
+    FLOOR_CONFIG_SLOTS,
+    MAX_FLOORS,
     PANEL_DIST_DIRNAME,
     PANEL_ICON,
     PANEL_TARGET_FOLDER,
@@ -38,6 +32,7 @@ SAVE_WS_SCHEMA = {
     "type": f"{DOMAIN}/save",
     "version": int,
     "bindings": list,
+    vol.Optional("global_config"): dict,
 }
 
 LOAD_WS_SCHEMA = {
@@ -131,7 +126,7 @@ def _sanitize_floors(raw_floors: Any) -> list[dict[str, Any]]:
         floor = _sanitize_floor_item(item, f"floor_{idx}")
         if floor is not None:
             floors.append(floor)
-    return floors
+    return floors[:MAX_FLOORS]
 
 
 def _entry_floors(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -145,41 +140,27 @@ def _entry_floors(hass: HomeAssistant) -> list[dict[str, Any]]:
 
     floors: list[dict[str, Any]] = []
 
-    ground_model = str(source.get(CONF_GROUND_MODEL_PATH, "")).strip()
-    if ground_model:
+    for slot in FLOOR_CONFIG_SLOTS:
+        model_path = str(source.get(slot["model_key"], "")).strip()
+        if not model_path:
+            continue
+
+        floor_id = slot["id"]
+        floor_name = str(source.get(slot["name_key"], slot["default_name"])).strip() or slot["default_name"]
+        offset_key = slot["offset_key"]
+        default_offset = float(slot["default_offset"])
+        y_offset = default_offset if offset_key is None else _safe_float(source.get(offset_key, default_offset), default_offset)
+
         floors.append(
             {
-                "id": "ground",
-                "name": str(source.get(CONF_GROUND_NAME, "Ground Floor")).strip() or "Ground Floor",
-                "model_path": ground_model,
-                "y_offset": 0.0,
+                "id": floor_id,
+                "name": floor_name,
+                "model_path": model_path,
+                "y_offset": y_offset,
             }
         )
 
-    first_model = str(source.get(CONF_FIRST_MODEL_PATH, "")).strip()
-    if first_model:
-        floors.append(
-            {
-                "id": "first",
-                "name": str(source.get(CONF_FIRST_NAME, "First Floor")).strip() or "First Floor",
-                "model_path": first_model,
-                "y_offset": _safe_float(source.get(CONF_FIRST_Y_OFFSET, 2.4), 2.4),
-            }
-        )
-
-    second_model = str(source.get(CONF_SECOND_MODEL_PATH, "")).strip()
-    if second_model:
-        floors.append(
-            {
-                "id": "second",
-                "name": str(source.get(CONF_SECOND_NAME, "Second Floor")).strip() or "Second Floor",
-                "model_path": second_model,
-                "y_offset": _safe_float(source.get(CONF_SECOND_Y_OFFSET, 4.8), 4.8),
-                "optional": True,
-            }
-        )
-
-    return floors
+    return floors[:MAX_FLOORS]
 
 
 def _resolve_payload_floors(hass: HomeAssistant, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -191,7 +172,36 @@ def _resolve_payload_floors(hass: HomeAssistant, payload: dict[str, Any]) -> lis
     if stored:
         return stored
 
-    return deepcopy(DEFAULT_PAYLOAD["floors"])
+    return deepcopy(DEFAULT_PAYLOAD["floors"])[:MAX_FLOORS]
+
+
+def _sanitize_global_config(raw_global_config: Any) -> dict[str, Any]:
+    default_config = deepcopy(
+        DEFAULT_PAYLOAD.get(
+            "global_config",
+            {"ambient_level": 45, "default_floor_index": 0, "default_camera_position": None},
+        )
+    )
+    if not isinstance(default_config, dict):
+        default_config = {"ambient_level": 45, "default_floor_index": 0, "default_camera_position": None}
+
+    if not isinstance(raw_global_config, dict):
+        return default_config
+
+    ambient = _safe_float(raw_global_config.get("ambient_level", default_config.get("ambient_level", 45)), 45.0)
+    default_floor_index = int(_safe_float(raw_global_config.get("default_floor_index", default_config.get("default_floor_index", 0)), 0.0))
+    camera_position = raw_global_config.get("default_camera_position", default_config.get("default_camera_position"))
+    valid_camera_position = (
+        isinstance(camera_position, list)
+        and len(camera_position) == 3
+        and all(isinstance(value, (int, float)) for value in camera_position)
+    )
+    default_config["ambient_level"] = int(max(0, min(100, round(ambient))))
+    default_config["default_floor_index"] = int(max(0, min(MAX_FLOORS - 1, default_floor_index)))
+    default_config["default_camera_position"] = (
+        [float(camera_position[0]), float(camera_position[1]), float(camera_position[2])] if valid_camera_position else None
+    )
+    return default_config
 
 
 async def _async_get_store(hass: HomeAssistant) -> Store[dict[str, Any]]:
@@ -214,6 +224,7 @@ async def _async_read_payload(hass: HomeAssistant) -> dict[str, Any]:
     return {
         "version": version,
         "bindings": bindings,
+        "global_config": _sanitize_global_config(payload.get("global_config")),
         "floors": _resolve_payload_floors(hass, payload),
     }
 
@@ -223,11 +234,17 @@ async def _async_save_payload(hass: HomeAssistant, payload: dict[str, Any]) -> N
     await store.async_save(payload)
 
 
-async def _async_save_bindings(hass: HomeAssistant, version: int, bindings: list[Any]) -> dict[str, Any]:
+async def _async_save_bindings(
+    hass: HomeAssistant,
+    version: int,
+    bindings: list[Any],
+    global_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     current = await _async_read_payload(hass)
     payload = {
         "version": int(version),
         "bindings": list(bindings),
+        "global_config": _sanitize_global_config(global_config if global_config is not None else current.get("global_config")),
         "floors": _resolve_payload_floors(hass, current),
     }
     await _async_save_payload(hass, payload)
@@ -244,6 +261,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             hass,
             int(call.data.get("version", 1)),
             list(call.data["bindings"]),
+            call.data.get("global_config"),
         )
 
     async def async_clear_service(call: ServiceCall) -> None:
@@ -263,6 +281,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             hass,
             int(msg.get("version", 1)),
             list(msg["bindings"]),
+            msg.get("global_config"),
         )
         connection.send_result(msg["id"], payload)
 

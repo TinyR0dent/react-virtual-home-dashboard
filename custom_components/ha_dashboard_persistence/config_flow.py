@@ -6,42 +6,47 @@ from homeassistant import config_entries
 import voluptuous as vol
 
 from .const import (
-    CONF_FIRST_MODEL_PATH,
-    CONF_FIRST_NAME,
-    CONF_FIRST_Y_OFFSET,
-    CONF_GROUND_MODEL_PATH,
-    CONF_GROUND_NAME,
-    CONF_SECOND_MODEL_PATH,
-    CONF_SECOND_NAME,
-    CONF_SECOND_Y_OFFSET,
     DOMAIN,
+    FLOOR_CONFIG_SLOTS,
 )
 
-DEFAULTS: dict[str, Any] = {
-    CONF_GROUND_NAME: "Ground Floor",
-    CONF_GROUND_MODEL_PATH: "/local/ha-dashboard/models/ground-floor.glb",
-    CONF_FIRST_NAME: "First Floor",
-    CONF_FIRST_MODEL_PATH: "/local/ha-dashboard/models/first-floor.glb",
-    CONF_FIRST_Y_OFFSET: 2.4,
-    CONF_SECOND_NAME: "Second Floor",
-    CONF_SECOND_MODEL_PATH: "",
-    CONF_SECOND_Y_OFFSET: 4.8,
-}
+def _defaults() -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for slot in FLOOR_CONFIG_SLOTS:
+        values[slot["name_key"]] = slot["default_name"]
+        values[slot["model_key"]] = slot["default_model_path"]
+        if slot["offset_key"] is not None:
+            values[slot["offset_key"]] = float(slot["default_offset"])
+    return values
+
+
+DEFAULTS: dict[str, Any] = _defaults()
 
 
 def _schema(defaults: dict[str, Any]) -> vol.Schema:
-    return vol.Schema(
-        {
-            vol.Required(CONF_GROUND_NAME, default=defaults[CONF_GROUND_NAME]): str,
-            vol.Required(CONF_GROUND_MODEL_PATH, default=defaults[CONF_GROUND_MODEL_PATH]): str,
-            vol.Required(CONF_FIRST_NAME, default=defaults[CONF_FIRST_NAME]): str,
-            vol.Optional(CONF_FIRST_MODEL_PATH, default=defaults[CONF_FIRST_MODEL_PATH]): str,
-            vol.Required(CONF_FIRST_Y_OFFSET, default=float(defaults[CONF_FIRST_Y_OFFSET])): vol.Coerce(float),
-            vol.Required(CONF_SECOND_NAME, default=defaults[CONF_SECOND_NAME]): str,
-            vol.Optional(CONF_SECOND_MODEL_PATH, default=defaults[CONF_SECOND_MODEL_PATH]): str,
-            vol.Required(CONF_SECOND_Y_OFFSET, default=float(defaults[CONF_SECOND_Y_OFFSET])): vol.Coerce(float),
-        }
-    )
+    schema_fields: dict[Any, Any] = {}
+
+    for slot in FLOOR_CONFIG_SLOTS:
+        name_key = slot["name_key"]
+        model_key = slot["model_key"]
+        offset_key = slot["offset_key"]
+
+        schema_fields[vol.Required(name_key, default=defaults[name_key])] = str
+        model_field = vol.Required if slot["required_model"] else vol.Optional
+        schema_fields[model_field(model_key, default=defaults[model_key])] = str
+
+        if offset_key is not None:
+            schema_fields[vol.Required(offset_key, default=float(defaults[offset_key]))] = vol.Coerce(float)
+
+    return vol.Schema(schema_fields)
+
+
+def _clean_model_paths(user_input: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(user_input)
+    for slot in FLOOR_CONFIG_SLOTS:
+        model_key = slot["model_key"]
+        cleaned[model_key] = str(cleaned.get(model_key, "")).strip()
+    return cleaned
 
 
 class DashboardPersistenceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -52,10 +57,7 @@ class DashboardPersistenceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="single_instance_allowed")
 
         if user_input is not None:
-            cleaned = dict(user_input)
-            cleaned[CONF_GROUND_MODEL_PATH] = str(cleaned[CONF_GROUND_MODEL_PATH]).strip()
-            cleaned[CONF_FIRST_MODEL_PATH] = str(cleaned.get(CONF_FIRST_MODEL_PATH, "")).strip()
-            cleaned[CONF_SECOND_MODEL_PATH] = str(cleaned.get(CONF_SECOND_MODEL_PATH, "")).strip()
+            cleaned = _clean_model_paths(user_input)
             return self.async_create_entry(title="HA Dashboard Persistence", data=cleaned)
 
         return self.async_show_form(step_id="user", data_schema=_schema(DEFAULTS))
@@ -71,10 +73,7 @@ class DashboardPersistenceOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
-            cleaned = dict(user_input)
-            cleaned[CONF_GROUND_MODEL_PATH] = str(cleaned[CONF_GROUND_MODEL_PATH]).strip()
-            cleaned[CONF_FIRST_MODEL_PATH] = str(cleaned.get(CONF_FIRST_MODEL_PATH, "")).strip()
-            cleaned[CONF_SECOND_MODEL_PATH] = str(cleaned.get(CONF_SECOND_MODEL_PATH, "")).strip()
+            cleaned = _clean_model_paths(user_input)
             return self.async_create_entry(title="", data=cleaned)
 
         defaults = dict(DEFAULTS)

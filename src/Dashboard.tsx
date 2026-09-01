@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useHass } from '@hakit/core';
 import { FloorStackViewer } from './components/FloorViewer';
-import type { UpperFloorConfig } from './components/FloorViewer';
+import type { FloorModelConfig } from './components/FloorViewer';
 
 const base = import.meta.env.BASE_URL;
 const buildId = import.meta.env.VITE_BUILD_ID ?? 'dev';
@@ -22,11 +22,33 @@ function withBuildId(url: string): string {
   return url.includes('?') ? `${url}&v=${buildId}` : `${url}?v=${buildId}`;
 }
 
-const fallbackGround = `${base}models/ground-floor.glb?v=${buildId}`;
-const fallbackUpper: UpperFloorConfig[] = [
+function resolveModelUrl(rawUrl: string): string {
+  const modelUrl = rawUrl.trim();
+  if (!modelUrl) return modelUrl;
+
+  const isLocalHost =
+    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  if (isLocalHost && modelUrl.startsWith('/local/')) {
+    const fileName = modelUrl.split('/').filter(Boolean).pop();
+    if (fileName) {
+      return withBuildId(`${base}models/${fileName}`);
+    }
+  }
+
+  return withBuildId(modelUrl);
+}
+
+const MAX_FLOORS = 3;
+const DEFAULT_FLOOR_HEIGHT = 2.4;
+
+const fallbackFloors: FloorModelConfig[] = [
+  {
+    modelUrl: `${base}models/ground-floor.glb?v=${buildId}`,
+    yOffset: 0,
+  },
   {
     modelUrl: `${base}models/first-floor.glb?v=${buildId}`,
-    yOffset: 2.4,
+    yOffset: DEFAULT_FLOOR_HEIGHT,
   },
 ];
 
@@ -35,12 +57,22 @@ function Dashboard() {
     sendMessagePromise: (message: Record<string, unknown>) => Promise<unknown>;
   } | null;
 
-  const [groundFloorUrl, setGroundFloorUrl] = useState<string>(fallbackGround);
-  const [upperFloors, setUpperFloors] = useState<UpperFloorConfig[]>(fallbackUpper);
+  const [floors, setFloors] = useState<FloorModelConfig[]>(fallbackFloors);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+
+  const isLocalHost =
+    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
   useEffect(() => {
     let cancelled = false;
+
+    if (isLocalHost) {
+      setFloors(fallbackFloors);
+      setIsBootstrapping(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const loadBootstrap = async () => {
       if (!connection) {
@@ -55,16 +87,14 @@ function Dashboard() {
 
         if (cancelled) return;
 
-        const floors = Array.isArray(result?.floors)
+        const configuredFloors = Array.isArray(result?.floors)
           ? result.floors.filter(f => typeof f?.model_path === 'string' && f.model_path.trim())
           : [];
-        if (floors.length > 0) {
-          const [ground, ...upper] = floors;
-          setGroundFloorUrl(withBuildId(ground.model_path!.trim()));
-          setUpperFloors(
-            upper.map(floor => ({
-              modelUrl: withBuildId(floor.model_path!.trim()),
-              yOffset: Number.isFinite(floor.y_offset) ? Number(floor.y_offset) : 0,
+        if (configuredFloors.length > 0) {
+          setFloors(
+            configuredFloors.slice(0, MAX_FLOORS).map((floor, index) => ({
+              modelUrl: resolveModelUrl(floor.model_path!),
+              yOffset: Number.isFinite(floor.y_offset) ? Number(floor.y_offset) : index * DEFAULT_FLOOR_HEIGHT,
             }))
           );
         }
@@ -82,9 +112,9 @@ function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [connection]);
+  }, [connection, isLocalHost]);
 
-  const canRender = useMemo(() => Boolean(groundFloorUrl), [groundFloorUrl]);
+  const canRender = useMemo(() => floors.length > 0 && floors.every(floor => Boolean(floor.modelUrl)), [floors]);
 
   if (isBootstrapping) {
     return null;
@@ -98,7 +128,7 @@ function Dashboard() {
     );
   }
 
-  return <FloorStackViewer groundFloorUrl={groundFloorUrl} upperFloors={upperFloors} />;
+  return <FloorStackViewer floors={floors} />;
 }
 
 export default Dashboard;

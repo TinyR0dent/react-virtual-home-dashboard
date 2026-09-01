@@ -14,10 +14,49 @@ CONF_FIRST_Y_OFFSET = "first_y_offset"
 CONF_SECOND_MODEL_PATH = "second_model_path"
 CONF_SECOND_NAME = "second_name"
 CONF_SECOND_Y_OFFSET = "second_y_offset"
+MAX_FLOORS = 3
+
+FLOOR_CONFIG_SLOTS = [
+    {
+        "id": "ground",
+        "default_name": "Ground Floor",
+        "name_key": CONF_GROUND_NAME,
+        "model_key": CONF_GROUND_MODEL_PATH,
+        "default_model_path": "/local/ha-dashboard/models/ground-floor.glb",
+        "offset_key": None,
+        "default_offset": 0.0,
+        "required_model": True,
+    },
+    {
+        "id": "first",
+        "default_name": "First Floor",
+        "name_key": CONF_FIRST_NAME,
+        "model_key": CONF_FIRST_MODEL_PATH,
+        "default_model_path": "/local/ha-dashboard/models/first-floor.glb",
+        "offset_key": CONF_FIRST_Y_OFFSET,
+        "default_offset": 2.4,
+        "required_model": False,
+    },
+    {
+        "id": "second",
+        "default_name": "Second Floor",
+        "name_key": CONF_SECOND_NAME,
+        "model_key": CONF_SECOND_MODEL_PATH,
+        "default_model_path": "",
+        "offset_key": CONF_SECOND_Y_OFFSET,
+        "default_offset": 4.8,
+        "required_model": False,
+    },
+]
 
 DEFAULT_PAYLOAD = {
     "version": 1,
     "bindings": [],
+    "global_config": {
+        "ambient_level": 45,
+        "default_floor_index": 0,
+        "default_camera_position": None,
+    },
     "floors": [
         {
             "id": "ground",

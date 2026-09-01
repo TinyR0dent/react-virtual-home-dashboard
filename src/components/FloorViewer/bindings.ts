@@ -39,14 +39,15 @@ export interface PresenceBinding extends BaseBinding {
 
 export type ModelBinding = LightBinding | DoorBinding | ClimateBinding | AlarmBinding | PresenceBinding;
 
-export interface UpperFloorConfig {
+export interface FloorModelConfig {
   modelUrl: string;
   yOffset: number;
 }
 
+export type UpperFloorConfig = FloorModelConfig;
+
 export interface FloorStackViewerProps {
-  groundFloorUrl: string;
-  upperFloors: UpperFloorConfig[];
+  floors: FloorModelConfig[];
   startY?: number;
   cameraPosition?: [number, number, number];
 }

@@ -8,7 +8,7 @@ import type { EntityName } from '@hakit/core';
 export type LightEntityId = Extract<EntityAttributesProps['entity'], `light.${string}` | `switch.${string}`>;
 
 interface LightOnProps {
-  gltf: any;
+  gltf: { nodes?: Record<string, THREE.Object3D>; scene?: THREE.Object3D };
   lightEntityId: LightEntityId; // Entity ID for the light
   lightObjectName: string; // Name of the light mesh in the GLB file
 }
@@ -16,7 +16,7 @@ interface LightOnProps {
 function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
   const light = useEntity(lightEntityId as EntityName) as
     { state?: string; attributes?: { brightness?: number; hs_color?: [number, number] } } | undefined;
-  const lightMesh = gltf.nodes[lightObjectName];
+  const lightMesh = gltf.nodes?.[lightObjectName] ?? gltf.scene?.getObjectByName?.(lightObjectName);
 
   const pointLight = useRef<THREE.PointLight>(null);
 
@@ -38,9 +38,14 @@ function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
   }, [lightMesh]);
 
   useFrame(() => {
-    if (!ready) return;
     if (!pointLight.current) return;
-    if (!light) return;
+    if (!lightMesh) return;
+
+    const worldPos = new THREE.Vector3();
+    lightMesh.getWorldPosition(worldPos);
+    pointLight.current.position.copy(worldPos);
+
+    if (!ready || !light) return;
 
     const isOn = light.state === 'on';
 
@@ -63,22 +68,13 @@ function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
     return null;
   }
 
-  if (!pointLight.current) {
-    console.warn('[LightOn] Point light reference is not set.');
-    return null;
-  }
-
-  if (!ready || !light) {
-    return null;
-  }
-
   return (
     <pointLight
       ref={pointLight}
       distance={4}
       decay={2.5}
       color={
-        light.attributes?.hs_color
+        light?.attributes?.hs_color
           ? new THREE.Color().setHSL(light.attributes.hs_color[0] / 360, light.attributes.hs_color[1] / 100, 0.5)
           : '#fff8e7'
       } // light colour or warm white
