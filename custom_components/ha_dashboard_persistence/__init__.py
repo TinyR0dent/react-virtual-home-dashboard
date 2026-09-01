@@ -78,17 +78,33 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
     await hass.async_add_executor_job(_copy)
 
 
-from homeassistant.components.panel_custom import async_register_panel
+from homeassistant.components import frontend
 
 async def _register_sidebar_panel(hass: HomeAssistant) -> None:
-    async_register_panel(
+    try:
+        frontend.async_remove_panel(PANEL_URL_PATH)
+    except Exception:
+        pass
+
+    frontend.async_register_built_in_panel(
         hass,
-        webcomponent_name="ha-dashboard-persistence",
-        frontend_url_path="ha-dashboard-persistence",
-        module_url="/local/ha_dashboard_persistence/main.js",
-        sidebar_title="Dashboard Persistence",
-        sidebar_icon="mdi:database",
+        component_name="iframe",
+        sidebar_title=PANEL_TITLE,
+        sidebar_icon=PANEL_ICON,
+        frontend_url_path=PANEL_URL_PATH,
+        config={
+            "url": f"/local/{PANEL_TARGET_FOLDER}/index.html",
+            "require_admin": False,
+        },
+        require_admin=False,
     )
+
+
+def _unregister_sidebar_panel(hass: HomeAssistant) -> None:
+    try:
+        frontend.async_remove_panel(PANEL_URL_PATH)
+    except Exception:
+        pass
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -385,7 +401,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN].setdefault("entries", {})
     hass.data[DOMAIN]["entries"][entry.entry_id] = entry
     await _async_install_panel_assets(hass)
-    _register_sidebar_panel(hass)
+    await _register_sidebar_panel(hass)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -403,4 +419,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await _async_install_panel_assets(hass)
-    _register_sidebar_panel(hass)
+    await _register_sidebar_panel(hass)

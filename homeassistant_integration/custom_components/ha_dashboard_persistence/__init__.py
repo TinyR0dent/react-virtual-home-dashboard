@@ -97,6 +97,13 @@ async def _register_sidebar_panel(hass: HomeAssistant) -> None:
     )
 
 
+def _unregister_sidebar_panel(hass: HomeAssistant) -> None:
+    try:
+        frontend.async_remove_panel(PANEL_URL_PATH)
+    except Exception:
+        pass
+
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -434,4 +441,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await _async_install_panel_assets(hass)
-    _register_sidebar_panel(hass)
+    await _register_sidebar_panel(hass)
