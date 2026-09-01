@@ -38,6 +38,11 @@ import { doorAliases, lightAliases, presenceAliases } from './aliases';
 
 useGLTF.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
 
+function resolveModelLoadUrl(url: string): string {
+  if (!url.startsWith('/local/')) return url;
+  return url.split('#')[0].split('?')[0];
+}
+
 function ControlsHint() {
   const [isTouch, setIsTouch] = useState(false);
 
@@ -141,7 +146,8 @@ function InteractiveFloor({
   roomAppearanceByArea: Record<string, RoomAppearance>;
   enableHoverHighlights: boolean;
 }) {
-  const gltf = useGLTF(url);
+  const resolvedUrl = useMemo(() => resolveModelLoadUrl(url), [url]);
+  const gltf = useGLTF(resolvedUrl);
   const floorGltf = useMemo(() => ({ ...gltf, scene: gltf.scene.clone(true) }), [gltf]);
   const floorNodes = useMemo(() => {
     const nodes: Record<string, THREE.Object3D> = {};
@@ -1256,7 +1262,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     if (!nextFloor) return;
 
     const preloadId = window.setTimeout(() => {
-      useGLTF.preload(nextFloor.modelUrl);
+      useGLTF.preload(resolveModelLoadUrl(nextFloor.modelUrl));
     }, 140);
 
     return () => window.clearTimeout(preloadId);

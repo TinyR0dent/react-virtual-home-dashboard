@@ -19,6 +19,7 @@ interface BootstrapPayload {
 
 function withBuildId(url: string): string {
   if (!url) return url;
+  if (url.startsWith('/local/')) return url;
   return url.includes('?') ? `${url}&v=${buildId}` : `${url}?v=${buildId}`;
 }
 
@@ -46,6 +47,10 @@ function normalizeHaModelPath(rawPath: string): string {
 function resolveModelUrl(rawUrl: string): string {
   const modelUrl = normalizeHaModelPath(rawUrl);
   if (!modelUrl) return modelUrl;
+
+  if (modelUrl.startsWith('/local/')) {
+    return modelUrl.split('#')[0].split('?')[0];
+  }
 
   const isLocalHost =
     typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
