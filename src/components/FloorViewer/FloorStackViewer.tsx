@@ -174,9 +174,15 @@ function InteractiveFloor({
     }
   });
 
-  const doorBindings = bindings.filter((binding): binding is DoorBinding => binding.type === 'door');
-  const lightBindings = bindings.filter((binding): binding is LightBinding => binding.type === 'light');
-  const presenceBindings = bindings.filter((binding): binding is PresenceBinding => binding.type === 'presence');
+  const doorBindings = bindings.filter(
+    (binding): binding is DoorBinding => binding.type === 'door' && Boolean(floorNodes[binding.modelPartName])
+  );
+  const lightBindings = bindings.filter(
+    (binding): binding is LightBinding => binding.type === 'light' && Boolean(floorNodes[binding.modelPartName])
+  );
+  const presenceBindings = bindings.filter(
+    (binding): binding is PresenceBinding => binding.type === 'presence' && Boolean(floorNodes[binding.modelPartName])
+  );
 
   const roomAnchors = useMemo(() => {
     if (!showRoomMarkers)
@@ -911,8 +917,6 @@ function RoomInfoPopup({
     setDraftDisplayName(roomAppearance.displayName ?? '');
   }, [roomAppearance.displayName, selectedAreaId]);
 
-  if (!open) return null;
-
   const allowedDomains = useMemo(() => {
     const domains = availableEntityIds
       .map(entityId => (entityId.split('.')[0] ?? '').trim())
@@ -922,6 +926,8 @@ function RoomInfoPopup({
     // Sensible fallback when the selected room currently has no entities.
     return domains.length > 0 ? domains : ['light', 'switch', 'climate', 'fan', 'cover', 'lock', 'media_player'];
   }, [availableEntityIds]);
+
+  if (!open) return null;
 
   const candidateEntities = (showAbsoluteAllEntities ? allRegistryEntityIds : showAllEntities ? allAvailableEntityIds : availableEntityIds)
     .filter(Boolean)
@@ -1337,9 +1343,9 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
         if (cancelled) return;
 
         if (Array.isArray(result?.bindings)) {
-          if (result.bindings.length > 0) {
-            setBindings(result.bindings as ModelBinding[]);
-          }
+          // Remote payload is source of truth in Home Assistant mode.
+          // This also clears stale browser-local bindings on fresh installs.
+          setBindings(result.bindings as ModelBinding[]);
         }
 
         const ambientLevel = Number(result?.global_config?.ambient_level);

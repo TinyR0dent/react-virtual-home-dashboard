@@ -13,6 +13,8 @@ interface LightOnProps {
   lightObjectName: string; // Name of the light mesh in the GLB file
 }
 
+const missingMeshWarnings = new Set<string>();
+
 function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
   const light = useEntity(lightEntityId as EntityName) as
     { state?: string; attributes?: { brightness?: number; hs_color?: [number, number] } } | undefined;
@@ -36,6 +38,14 @@ function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
 
     pointLight.current.position.copy(worldPos);
   }, [lightMesh]);
+
+  useEffect(() => {
+    if (lightMesh) return;
+    const warningKey = `${lightEntityId}::${lightObjectName}`;
+    if (missingMeshWarnings.has(warningKey)) return;
+    missingMeshWarnings.add(warningKey);
+    console.warn(`[LightOn] Light mesh "${lightObjectName}" not found in GLTF for entity "${lightEntityId}".`);
+  }, [lightEntityId, lightMesh, lightObjectName]);
 
   useFrame(() => {
     if (!pointLight.current) return;
@@ -63,10 +73,7 @@ function LightOn({ gltf, lightEntityId, lightObjectName }: LightOnProps) {
     pointLight.current.color = new THREE.Color(targetColor);
   });
 
-  if (!lightMesh) {
-    console.warn(`[LightOn] Light mesh "${lightObjectName}" not found in GLTF.`);
-    return null;
-  }
+  if (!lightMesh) return null;
 
   return (
     <pointLight
