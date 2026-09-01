@@ -213,6 +213,8 @@ export const ConfigurationScreen = ({ open, onClose }: ConfigurationScreenProps)
                 onSelect={entityId => {
                   console.log(`Selected entity ${entityId} for area ${selectedArea}`);
                 }}
+                searchable
+                searchPlaceholder='Search entities...'
               />
             </div>
 

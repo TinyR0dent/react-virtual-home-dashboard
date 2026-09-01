@@ -187,11 +187,23 @@ def _sanitize_global_config(raw_global_config: Any) -> dict[str, Any]:
     default_config = deepcopy(
         DEFAULT_PAYLOAD.get(
             "global_config",
-            {"ambient_level": 45, "default_floor_index": 0, "default_camera_position": None},
+            {
+                "ambient_level": 45,
+                "default_floor_index": 0,
+                "default_camera_position": None,
+                "room_popup_entities": {},
+                "room_popup_appearance": {},
+            },
         )
     )
     if not isinstance(default_config, dict):
-        default_config = {"ambient_level": 45, "default_floor_index": 0, "default_camera_position": None}
+        default_config = {
+            "ambient_level": 45,
+            "default_floor_index": 0,
+            "default_camera_position": None,
+            "room_popup_entities": {},
+            "room_popup_appearance": {},
+        }
 
     if not isinstance(raw_global_config, dict):
         return default_config
@@ -209,6 +221,45 @@ def _sanitize_global_config(raw_global_config: Any) -> dict[str, Any]:
     default_config["default_camera_position"] = (
         [float(camera_position[0]), float(camera_position[1]), float(camera_position[2])] if valid_camera_position else None
     )
+
+    room_popup_entities = raw_global_config.get("room_popup_entities", default_config.get("room_popup_entities", {}))
+    sanitized_room_popup_entities: dict[str, list[str]] = {}
+    if isinstance(room_popup_entities, dict):
+        for area_id, entity_ids in room_popup_entities.items():
+            if not isinstance(entity_ids, list):
+                continue
+            cleaned = [str(entity_id).strip() for entity_id in entity_ids if str(entity_id).strip()]
+            unique_cleaned = list(dict.fromkeys(cleaned))
+            if unique_cleaned:
+                sanitized_room_popup_entities[str(area_id)] = unique_cleaned
+
+    default_config["room_popup_entities"] = sanitized_room_popup_entities
+
+    allowed_icon_keys = {"home", "bedroom", "kitchen", "office", "bathroom", "lounge"}
+    allowed_colors = {"#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#06B6D4"}
+    room_popup_appearance = raw_global_config.get("room_popup_appearance", default_config.get("room_popup_appearance", {}))
+    sanitized_room_popup_appearance: dict[str, dict[str, str]] = {}
+    if isinstance(room_popup_appearance, dict):
+        for area_id, appearance in room_popup_appearance.items():
+            if not isinstance(appearance, dict):
+                continue
+
+            display_name = str(appearance.get("display_name", appearance.get("displayName", ""))).strip()[:40]
+            icon_key = str(appearance.get("icon_key", appearance.get("iconKey", ""))).strip().lower()
+            color = str(appearance.get("color", "")).strip().upper()
+
+            next_appearance: dict[str, str] = {}
+            if display_name:
+                next_appearance["display_name"] = display_name
+            if icon_key in allowed_icon_keys:
+                next_appearance["icon_key"] = icon_key
+            if color in allowed_colors:
+                next_appearance["color"] = color
+
+            if next_appearance:
+                sanitized_room_popup_appearance[str(area_id)] = next_appearance
+
+    default_config["room_popup_appearance"] = sanitized_room_popup_appearance
     return default_config
 
 

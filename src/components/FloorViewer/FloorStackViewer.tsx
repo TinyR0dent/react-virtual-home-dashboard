@@ -1,18 +1,25 @@
 import { Component, Suspense, useRef, useCallback, useState, useEffect, useMemo, type MutableRefObject, type ReactNode } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Html } from '@react-three/drei';
-import { useHass } from '@hakit/core';
+import { useAreas, useEntity, useHass, type EntityName } from '@hakit/core';
+import { Bed, Briefcase, ChevronDown, ChevronUp, Home, Pencil, RotateCcw, Soup, Tv, Waves, type LucideIcon } from 'lucide-react';
 import * as THREE from 'three';
 import DoorOpen from './Actions/DoorOpen';
 import LightOn from './Actions/LightOn';
 import RoomPresence from './Actions/RoomPresence';
+import { DropdownMenu } from '../ui-components/DropdownMenu';
 import { ObjectConfigPopup, type ObjectConfigPopupProps } from '../ui-components/ObjectConfigPopup';
 import {
   loadViewerLightingSettings,
   mapAmbientLevelToSceneLighting,
+  ROOM_ICON_COLORS,
+  ROOM_ICON_KEYS,
   saveViewerLightingSettings,
   VIEWER_LIGHTING_CHANGED_EVENT,
   VIEWER_LIGHTING_STORAGE_KEY,
+  type RoomIconColor,
+  type RoomIconKey,
+  type RoomPopupAppearance,
   type ViewerLightingSettings,
 } from './lighting';
 import {
@@ -116,6 +123,10 @@ function InteractiveFloor({
   revealEnd,
   bindings,
   onModelPartClick,
+  onAreaMarkerClick,
+  showRoomMarkers,
+  roomAppearanceByArea,
+  enableHoverHighlights,
 }: {
   url: string;
   finalY: number;
@@ -124,7 +135,11 @@ function InteractiveFloor({
   revealStart: number;
   revealEnd: number;
   bindings: ModelBinding[];
-  onModelPartClick: (partName: string) => void;
+  onModelPartClick: (partName: string, candidatePartNames: string[]) => void;
+  onAreaMarkerClick: (areaId: string, areaName: string) => void;
+  showRoomMarkers: boolean;
+  roomAppearanceByArea: Record<string, RoomAppearance>;
+  enableHoverHighlights: boolean;
 }) {
   const gltf = useGLTF(url);
   const floorGltf = useMemo(() => ({ ...gltf, scene: gltf.scene.clone(true) }), [gltf]);
@@ -157,6 +172,34 @@ function InteractiveFloor({
   const lightBindings = bindings.filter((binding): binding is LightBinding => binding.type === 'light');
   const presenceBindings = bindings.filter((binding): binding is PresenceBinding => binding.type === 'presence');
 
+  const roomAnchors = useMemo(() => {
+    if (!showRoomMarkers)
+      return [] as Array<{ areaId: string; areaName: string; position: [number, number, number]; appearance: RoomAppearance }>;
+
+    const grouped = new Map<string, { areaId: string; areaName: string; points: THREE.Vector3[] }>();
+    for (const binding of bindings) {
+      const node = floorNodes[binding.modelPartName];
+      if (!node) continue;
+
+      const existing = grouped.get(binding.areaId) ?? { areaId: binding.areaId, areaName: binding.areaName, points: [] };
+      existing.points.push(node.position.clone());
+      grouped.set(binding.areaId, existing);
+    }
+
+    return [...grouped.values()]
+      .filter(group => group.points.length > 0)
+      .map(group => {
+        const sum = group.points.reduce((acc, point) => acc.add(point), new THREE.Vector3(0, 0, 0));
+        const center = sum.multiplyScalar(1 / group.points.length);
+        return {
+          areaId: group.areaId,
+          areaName: group.areaName,
+          position: [center.x, center.y + 0.22, center.z] as [number, number, number],
+          appearance: roomAppearanceByArea[group.areaId] ?? {},
+        };
+      });
+  }, [bindings, floorNodes, roomAppearanceByArea, showRoomMarkers]);
+
   const matchesAlias = (partName: string) => {
     const aliasSet = new Set(
       [...doorAliases, ...lightAliases, ...presenceAliases].flatMap(alias => {
@@ -181,18 +224,16 @@ function InteractiveFloor({
 
   const getAliasMatchFromObject = (object: THREE.Object3D | null): { partName: string; group: THREE.Object3D } | null => {
     let cursor: THREE.Object3D | null = object;
-    let matched: { partName: string; group: THREE.Object3D } | null = null;
-
     while (cursor) {
       if (cursor.name && matchesAlias(cursor.name)) {
-        // Prefer the highest alias-matching ancestor so grouped fixtures are treated as one object.
-        matched = { partName: cursor.name, group: cursor };
+        // Prefer the closest alias-matching ancestor to preserve room-level identity.
+        return { partName: cursor.name, group: cursor };
       }
 
       cursor = cursor.parent;
     }
 
-    return matched;
+    return null;
   };
 
   const clearHighlight = () => {
@@ -255,18 +296,30 @@ function InteractiveFloor({
     event.stopPropagation();
     if (event.delta > 4) return;
 
+    const candidatePartNames: string[] = [];
+    let cursor: THREE.Object3D | null = (event.object as THREE.Object3D) ?? null;
+    while (cursor) {
+      if (cursor.name) candidatePartNames.push(cursor.name);
+      cursor = cursor.parent;
+    }
+
     const hit = getAliasMatchFromObject((event.object as THREE.Object3D) ?? null);
     if (hit) {
-      onModelPartClick(hit.group.name || hit.partName);
+      onModelPartClick(hit.group.name || hit.partName, candidatePartNames);
       return;
     }
 
     const partName = event.object?.name;
     if (!partName) return;
-    onModelPartClick(partName);
+    onModelPartClick(partName, candidatePartNames);
   };
 
   const handlePartHover = (event: ThreeEvent<PointerEvent>) => {
+    if (!enableHoverHighlights) {
+      clearHighlight();
+      return;
+    }
+
     event.stopPropagation();
 
     const hit = getAliasMatchFromObject((event.object as THREE.Object3D) ?? null);
@@ -277,6 +330,11 @@ function InteractiveFloor({
 
     setHighlight(hit.group);
   };
+
+  useEffect(() => {
+    if (enableHoverHighlights) return;
+    clearHighlight();
+  }, [enableHoverHighlights]);
 
   useEffect(() => {
     return () => {
@@ -320,10 +378,52 @@ function InteractiveFloor({
           object={floorGltf.scene}
           dispose={null}
           onClick={handlePartClick}
-          onPointerOver={handlePartHover}
-          onPointerMove={handlePartHover}
-          onPointerOut={clearHighlight}
+          onPointerOver={enableHoverHighlights ? handlePartHover : undefined}
+          onPointerMove={enableHoverHighlights ? handlePartHover : undefined}
+          onPointerOut={enableHoverHighlights ? clearHighlight : undefined}
         />
+
+        {roomAnchors.map(anchor => (
+          <Html key={`room-anchor-${anchor.areaId}`} position={anchor.position} center>
+            {(() => {
+              const key: RoomIconKey =
+                anchor.appearance.iconKey && ROOM_ICON_KEYS.includes(anchor.appearance.iconKey) ? anchor.appearance.iconKey : 'home';
+              const Icon = ROOM_ICON_BY_KEY[key];
+              const markerColor =
+                anchor.appearance.color &&
+                ROOM_ICON_COLORS.includes(anchor.appearance.color.toUpperCase() as (typeof ROOM_ICON_COLORS)[number])
+                  ? anchor.appearance.color.toUpperCase()
+                  : '#3B82F6';
+              return (
+                <button
+                  type='button'
+                  onClick={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onAreaMarkerClick(anchor.areaId, anchor.areaName);
+                  }}
+                  title={`Open ${anchor.areaName}`}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '999px',
+                    border: '1px solid rgba(201, 231, 255, 0.88)',
+                    background: `radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.36), ${markerColor})`,
+                    color: 'white',
+                    fontSize: 14,
+                    lineHeight: 1,
+                    display: 'grid',
+                    placeItems: 'center',
+                    boxShadow: '0 6px 18px rgba(0,0,0,0.4), 0 0 0 2px rgba(122, 198, 255, 0.28)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Icon size={15} strokeWidth={2.2} />
+                </button>
+              );
+            })()}
+          </Html>
+        ))}
       </group>
     </>
   );
@@ -452,7 +552,7 @@ function ScrollIndicator({
         onClick={() => onSeekIndex(Math.min(floorCount - 1, activeFloorIndex + 1))}
         disabled={activeFloorIndex >= floorCount - 1}
       >
-        +
+        <ChevronUp size={16} strokeWidth={2.2} />
       </button>
 
       <div
@@ -505,12 +605,546 @@ function ScrollIndicator({
         onClick={() => onSeekIndex(Math.max(0, activeFloorIndex - 1))}
         disabled={activeFloorIndex <= 0}
       >
-        -
+        <ChevronDown size={16} strokeWidth={2.2} />
       </button>
 
       <button style={{ ...btnStyle, marginTop: 4, fontSize: 18 }} aria-label='Reset camera' onClick={onReset} title='Reset camera'>
-        R
+        <RotateCcw size={15} strokeWidth={2.2} />
       </button>
+    </div>
+  );
+}
+
+type ViewerMode = 'edit' | 'view';
+
+type AreaEntityLike = {
+  entity_id: string;
+  attributes?: {
+    friendly_name?: string;
+  };
+};
+
+type AreaLike = {
+  area_id: string;
+  name: string;
+  entities?: AreaEntityLike[];
+};
+
+type RoomAppearance = RoomPopupAppearance;
+
+const NON_DEVICE_ENTITY_DOMAINS = new Set([
+  'automation',
+  'scene',
+  'script',
+  'sun',
+  'weather',
+  'zone',
+  'calendar',
+  'counter',
+  'timer',
+  'input_boolean',
+  'input_number',
+  'input_select',
+  'input_text',
+  'template',
+]);
+
+function isDeviceEntityCandidate(entityId: string): boolean {
+  const domain = entityId.split('.')[0] ?? '';
+  return domain !== '' && !NON_DEVICE_ENTITY_DOMAINS.has(domain);
+}
+
+const ROOM_ICON_BY_KEY: Record<RoomIconKey, LucideIcon> = {
+  home: Home,
+  bedroom: Bed,
+  kitchen: Soup,
+  office: Briefcase,
+  bathroom: Waves,
+  lounge: Tv,
+};
+
+function EntityStatusRow({ entityId, onRemove }: { entityId: string; onRemove?: (entityId: string) => void }) {
+  const entity = useEntity(entityId as EntityName) as { state?: string; attributes?: { friendly_name?: string } } | undefined;
+  const friendlyName = entity?.attributes?.friendly_name || entityId;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        padding: '8px 10px',
+        border: '1px solid rgba(255,255,255,0.12)',
+        borderRadius: 8,
+        background: 'rgba(255,255,255,0.04)',
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{friendlyName}</div>
+        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.58)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entityId}</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, color: 'rgba(170,220,255,0.95)' }}>{entity?.state ?? 'unknown'}</span>
+        {onRemove && (
+          <button
+            type='button'
+            onClick={() => onRemove(entityId)}
+            style={{
+              border: '1px solid rgba(255,120,120,0.4)',
+              background: 'rgba(255,120,120,0.12)',
+              color: '#ffd9d9',
+              borderRadius: 6,
+              padding: '4px 7px',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RoomStylePicker({
+  open,
+  selectedIconKey,
+  selectedColor,
+  onSelectIcon,
+  onSelectColor,
+  onClose,
+}: {
+  open: boolean;
+  selectedIconKey: RoomIconKey;
+  selectedColor: RoomIconColor;
+  onSelectIcon: (iconKey: RoomIconKey) => void;
+  onSelectColor: (color: RoomIconColor) => void;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 290,
+        background: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 12,
+      }}
+    >
+      <div
+        onClick={event => event.stopPropagation()}
+        style={{
+          width: 'min(440px, 100%)',
+          background: 'rgba(12, 16, 22, 0.98)',
+          border: '1px solid rgba(255,255,255,0.15)',
+          borderRadius: 12,
+          padding: 12,
+          color: 'white',
+        }}
+      >
+        <h4 style={{ margin: '0 0 10px 0', fontSize: 14 }}>Room Icon & Color</h4>
+
+        <div style={{ marginBottom: 10, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+          {ROOM_ICON_KEYS.map(iconKey => {
+            const Icon = ROOM_ICON_BY_KEY[iconKey];
+            const selected = selectedIconKey === iconKey;
+            return (
+              <button
+                key={iconKey}
+                type='button'
+                onClick={() => onSelectIcon(iconKey)}
+                style={{
+                  border: selected ? '1px solid rgba(89,183,255,0.6)' : '1px solid rgba(255,255,255,0.2)',
+                  background: selected ? 'rgba(89,183,255,0.2)' : 'rgba(255,255,255,0.06)',
+                  borderRadius: 8,
+                  height: 42,
+                  color: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  gap: 6,
+                  fontSize: 12,
+                  textTransform: 'capitalize',
+                }}
+              >
+                <Icon size={14} strokeWidth={2.2} />
+                {iconKey}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {ROOM_ICON_COLORS.map(color => {
+            const selected = selectedColor.toUpperCase() === color;
+            return (
+              <button
+                key={color}
+                type='button'
+                onClick={() => onSelectColor(color)}
+                aria-label={`Color ${color}`}
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: '999px',
+                  border: selected ? '2px solid white' : '1px solid rgba(255,255,255,0.45)',
+                  background: color,
+                  boxShadow: selected ? '0 0 0 2px rgba(255,255,255,0.35)' : 'none',
+                  cursor: 'pointer',
+                }}
+              />
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            type='button'
+            onClick={onClose}
+            style={{
+              border: '1px solid rgba(255,255,255,0.24)',
+              background: 'rgba(255,255,255,0.08)',
+              color: 'white',
+              borderRadius: 8,
+              padding: '5px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoomInfoPopup({
+  open,
+  baseAreaName,
+  areaName,
+  roomAppearance,
+  availableAreas,
+  selectedAreaId,
+  entityIds,
+  availableEntityIds,
+  allAvailableEntityIds,
+  allRegistryEntityIds,
+  onSelectAreaId,
+  onChangeDisplayName,
+  onChangeIconKey,
+  onChangeColor,
+  onAdd,
+  onRemove,
+  onReset,
+  onClose,
+}: {
+  open: boolean;
+  baseAreaName: string;
+  areaName: string;
+  roomAppearance: RoomAppearance;
+  availableAreas: Array<{ areaId: string; areaName: string }>;
+  selectedAreaId: string | null;
+  entityIds: string[];
+  availableEntityIds: string[];
+  allAvailableEntityIds: string[];
+  allRegistryEntityIds: string[];
+  onSelectAreaId: (areaId: string) => void;
+  onChangeDisplayName: (displayName: string) => void;
+  onChangeIconKey: (iconKey: RoomIconKey) => void;
+  onChangeColor: (color: RoomIconColor) => void;
+  onAdd: (entityId: string) => void;
+  onRemove: (entityId: string) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const [selectedEntityToAdd, setSelectedEntityToAdd] = useState<string | null>(null);
+  const [showAllEntities, setShowAllEntities] = useState(false);
+  const [showAbsoluteAllEntities, setShowAbsoluteAllEntities] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [draftDisplayName, setDraftDisplayName] = useState('');
+  const [showStylePicker, setShowStylePicker] = useState(false);
+
+  const selectedIconKey: RoomIconKey =
+    roomAppearance.iconKey && ROOM_ICON_KEYS.includes(roomAppearance.iconKey) ? roomAppearance.iconKey : 'home';
+  const selectedColor: RoomIconColor =
+    roomAppearance.color && ROOM_ICON_COLORS.includes(roomAppearance.color) ? roomAppearance.color : '#3B82F6';
+  const HeaderIcon = ROOM_ICON_BY_KEY[selectedIconKey];
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedEntityToAdd(null);
+      setShowAllEntities(false);
+      setShowAbsoluteAllEntities(false);
+      setIsEditingName(false);
+      setShowStylePicker(false);
+      setDraftDisplayName('');
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setShowAllEntities(false);
+    setShowAbsoluteAllEntities(false);
+    setSelectedEntityToAdd(null);
+  }, [selectedAreaId]);
+
+  useEffect(() => {
+    setDraftDisplayName(roomAppearance.displayName ?? '');
+  }, [roomAppearance.displayName, selectedAreaId]);
+
+  if (!open) return null;
+
+  const allowedDomains = useMemo(() => {
+    const domains = availableEntityIds
+      .map(entityId => (entityId.split('.')[0] ?? '').trim())
+      .filter(Boolean)
+      .filter((domain, index, all) => all.indexOf(domain) === index);
+
+    // Sensible fallback when the selected room currently has no entities.
+    return domains.length > 0 ? domains : ['light', 'switch', 'climate', 'fan', 'cover', 'lock', 'media_player'];
+  }, [availableEntityIds]);
+
+  const candidateEntities = (showAbsoluteAllEntities ? allRegistryEntityIds : showAllEntities ? allAvailableEntityIds : availableEntityIds)
+    .filter(Boolean)
+    .filter(entityId => {
+      if (showAbsoluteAllEntities) return true;
+      const domain = entityId.split('.')[0] ?? '';
+      return allowedDomains.includes(domain);
+    });
+  const addableEntities = candidateEntities
+    .filter(entityId => !entityIds.includes(entityId))
+    .filter((entityId, index, all) => all.indexOf(entityId) === index);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 270,
+        background: 'rgba(0, 0, 0, 0.44)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 12,
+      }}
+    >
+      <div
+        onClick={event => event.stopPropagation()}
+        style={{
+          width: 'min(500px, 100%)',
+          maxHeight: '70vh',
+          overflowY: 'auto',
+          background: 'rgba(13, 18, 24, 0.98)',
+          border: '1px solid rgba(255,255,255,0.14)',
+          borderRadius: 12,
+          padding: 12,
+          color: 'white',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type='button'
+              onClick={() => setShowStylePicker(true)}
+              title='Change room icon and color'
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '999px',
+                border: '1px solid rgba(255,255,255,0.35)',
+                background: selectedColor,
+                color: 'white',
+                display: 'grid',
+                placeItems: 'center',
+                cursor: 'pointer',
+              }}
+            >
+              <HeaderIcon size={14} strokeWidth={2.3} />
+            </button>
+            {!isEditingName ? (
+              <>
+                <h3 style={{ margin: 0, fontSize: 15 }}>{areaName}</h3>
+                <button
+                  type='button'
+                  onClick={() => setIsEditingName(true)}
+                  title='Edit display name'
+                  style={{
+                    width: 24,
+                    height: 24,
+                    border: '1px solid rgba(255,255,255,0.28)',
+                    borderRadius: 6,
+                    background: 'rgba(255,255,255,0.08)',
+                    color: 'white',
+                    display: 'grid',
+                    placeItems: 'center',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Pencil size={12} />
+                </button>
+              </>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  value={draftDisplayName}
+                  onChange={event => setDraftDisplayName(event.target.value)}
+                  placeholder={baseAreaName}
+                  maxLength={40}
+                  style={{
+                    height: 28,
+                    borderRadius: 6,
+                    border: '1px solid rgba(255,255,255,0.25)',
+                    background: 'rgba(255,255,255,0.09)',
+                    color: 'white',
+                    padding: '0 8px',
+                    fontSize: 12,
+                  }}
+                />
+                <button
+                  type='button'
+                  onClick={() => {
+                    onChangeDisplayName(draftDisplayName);
+                    setIsEditingName(false);
+                  }}
+                  style={{
+                    border: '1px solid rgba(126,232,166,0.5)',
+                    background: 'rgba(126,232,166,0.2)',
+                    color: '#e8fff0',
+                    borderRadius: 6,
+                    padding: '4px 8px',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            )}
+          </div>
+          <button
+            type='button'
+            onClick={onClose}
+            style={{
+              border: '1px solid rgba(255,255,255,0.22)',
+              background: 'rgba(255,255,255,0.08)',
+              color: 'white',
+              borderRadius: 8,
+              padding: '4px 8px',
+            }}
+          >
+            Close
+          </button>
+        </div>
+
+        <div style={{ marginTop: -4, marginBottom: 10, fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>Linked HA Area: {baseAreaName}</div>
+
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>
+            Zone shown in this popup
+          </label>
+          <DropdownMenu
+            placeholder='Select zone'
+            items={availableAreas.map(area => area.areaName)}
+            selectedValue={availableAreas.find(area => area.areaId === selectedAreaId)?.areaName ?? null}
+            onSelect={selectedAreaName => {
+              const selectedArea = availableAreas.find(area => area.areaName === selectedAreaName);
+              if (!selectedArea) return;
+              onSelectAreaId(selectedArea.areaId);
+            }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <DropdownMenu
+              placeholder='Add entity to this room popup'
+              items={addableEntities}
+              selectedValue={selectedEntityToAdd}
+              onSelect={entity => setSelectedEntityToAdd(entity)}
+              searchable
+              searchPlaceholder='Search entities...'
+              footerActionLabel={!showAllEntities ? 'Entity not in area' : undefined}
+              onFooterAction={
+                !showAllEntities
+                  ? () => {
+                      setShowAllEntities(true);
+                      setShowAbsoluteAllEntities(false);
+                    }
+                  : undefined
+              }
+              footerActions={
+                showAllEntities && !showAbsoluteAllEntities
+                  ? [
+                      {
+                        label: 'Show all entities',
+                        onAction: () => setShowAbsoluteAllEntities(true),
+                      },
+                    ]
+                  : undefined
+              }
+            />
+          </div>
+          <button
+            type='button'
+            onClick={() => {
+              if (!selectedEntityToAdd) return;
+              onAdd(selectedEntityToAdd);
+              setSelectedEntityToAdd(null);
+            }}
+            style={{
+              border: '1px solid rgba(89,183,255,0.36)',
+              background: 'rgba(89,183,255,0.18)',
+              color: '#dff1ff',
+              borderRadius: 8,
+              padding: '0 10px',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            Add
+          </button>
+          <button
+            type='button'
+            onClick={onReset}
+            style={{
+              border: '1px solid rgba(255,255,255,0.26)',
+              background: 'rgba(255,255,255,0.1)',
+              color: 'white',
+              borderRadius: 8,
+              padding: '0 10px',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            Reset
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {entityIds.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>No entities configured for this room popup.</div>
+          ) : (
+            entityIds.map(entityId => <EntityStatusRow key={entityId} entityId={entityId} onRemove={onRemove} />)
+          )}
+        </div>
+      </div>
+
+      <RoomStylePicker
+        open={showStylePicker}
+        selectedIconKey={selectedIconKey}
+        selectedColor={selectedColor}
+        onSelectIcon={onChangeIconKey}
+        onSelectColor={onChangeColor}
+        onClose={() => setShowStylePicker(false)}
+      />
     </div>
   );
 }
@@ -521,6 +1155,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
   const connection = useHass(state => state.connection) as {
     sendMessagePromise: (message: Record<string, unknown>) => Promise<unknown>;
   } | null;
+  const areas = useAreas() as AreaLike[];
   const scrollRef = useRef<HTMLDivElement>(null);
   const resetRef = useRef<{ reset: () => void }>({ reset: () => {} }).current;
 
@@ -531,6 +1166,10 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
   const [bindings, setBindings] = useState<ModelBinding[]>(() => loadBindingsFromStorage());
   const [hasLoadedRemote, setHasLoadedRemote] = useState(false);
   const [selectedModelPartName, setSelectedModelPartName] = useState<string | null>(null);
+  const [viewerMode, setViewerMode] = useState<ViewerMode>('edit');
+  const [roomPopupArea, setRoomPopupArea] = useState<{ areaId: string } | null>(null);
+  const [allRegistryEntityIds, setAllRegistryEntityIds] = useState<string[]>([]);
+  const [allEntityIds, setAllEntityIds] = useState<string[]>([]);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [activeFloorIndex, setActiveFloorIndex] = useState(() => {
     const settings = loadViewerLightingSettings();
@@ -660,7 +1299,13 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
           type: 'ha_dashboard_persistence/load',
         })) as {
           bindings?: unknown;
-          global_config?: { ambient_level?: unknown; default_floor_index?: unknown; default_camera_position?: unknown };
+          global_config?: {
+            ambient_level?: unknown;
+            default_floor_index?: unknown;
+            default_camera_position?: unknown;
+            room_popup_entities?: unknown;
+            room_popup_appearance?: unknown;
+          };
         };
 
         if (cancelled) return;
@@ -674,6 +1319,45 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
         const ambientLevel = Number(result?.global_config?.ambient_level);
         const configuredDefaultFloorIndex = Number(result?.global_config?.default_floor_index);
         const configuredCameraPosition = result?.global_config?.default_camera_position;
+        const configuredRoomPopupEntities = result?.global_config?.room_popup_entities;
+        const configuredRoomPopupAppearance = result?.global_config?.room_popup_appearance;
+        const nextRoomPopupEntities: Record<string, string[]> = {};
+        if (configuredRoomPopupEntities && typeof configuredRoomPopupEntities === 'object') {
+          for (const [areaId, entityIds] of Object.entries(configuredRoomPopupEntities as Record<string, unknown>)) {
+            if (!Array.isArray(entityIds)) continue;
+            const cleaned = entityIds
+              .map(value => String(value).trim())
+              .filter(Boolean)
+              .filter((value, index, all) => all.indexOf(value) === index);
+            if (cleaned.length > 0) {
+              nextRoomPopupEntities[areaId] = cleaned;
+            }
+          }
+        }
+        const nextRoomPopupAppearance: Record<string, RoomAppearance> = {};
+        if (configuredRoomPopupAppearance && typeof configuredRoomPopupAppearance === 'object') {
+          for (const [areaId, raw] of Object.entries(configuredRoomPopupAppearance as Record<string, unknown>)) {
+            if (!raw || typeof raw !== 'object') continue;
+            const appearance = raw as Record<string, unknown>;
+            const displayName = String(appearance.display_name ?? appearance.displayName ?? '')
+              .trim()
+              .slice(0, 40);
+            const iconKey = String(appearance.icon_key ?? appearance.iconKey ?? '')
+              .trim()
+              .toLowerCase() as RoomIconKey;
+            const color = String(appearance.color ?? '')
+              .trim()
+              .toUpperCase();
+
+            const next: RoomAppearance = {};
+            if (displayName) next.displayName = displayName;
+            if (ROOM_ICON_KEYS.includes(iconKey)) next.iconKey = iconKey;
+            if (ROOM_ICON_COLORS.includes(color as RoomIconColor)) next.color = color as RoomIconColor;
+            if (Object.keys(next).length > 0) {
+              nextRoomPopupAppearance[areaId] = next;
+            }
+          }
+        }
         const isValidCameraPosition =
           Array.isArray(configuredCameraPosition) &&
           configuredCameraPosition.length === 3 &&
@@ -687,6 +1371,8 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
             defaultCameraPosition: isValidCameraPosition
               ? [Number(configuredCameraPosition[0]), Number(configuredCameraPosition[1]), Number(configuredCameraPosition[2])]
               : prev.defaultCameraPosition,
+            roomPopupEntities: nextRoomPopupEntities,
+            roomPopupAppearance: nextRoomPopupAppearance,
           };
           saveViewerLightingSettings(next);
           return next;
@@ -719,6 +1405,8 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
           ambient_level: lightingSettings.ambientLevel,
           default_floor_index: lightingSettings.defaultFloorIndex,
           default_camera_position: lightingSettings.defaultCameraPosition,
+          room_popup_entities: lightingSettings.roomPopupEntities,
+          room_popup_appearance: lightingSettings.roomPopupAppearance,
         },
       })
       .catch(() => {
@@ -731,6 +1419,8 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     lightingSettings.ambientLevel,
     lightingSettings.defaultCameraPosition,
     lightingSettings.defaultFloorIndex,
+    lightingSettings.roomPopupEntities,
+    lightingSettings.roomPopupAppearance,
   ]);
 
   const onScroll = useCallback(() => {
@@ -822,6 +1512,231 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
 
   const selectedBinding = selectedModelPartName ? bindings.find(binding => binding.modelPartName === selectedModelPartName) : undefined;
 
+  const areaOptions = useMemo(() => areas.map(area => ({ areaId: area.area_id, areaName: area.name })), [areas]);
+  const areaEntityIds = useMemo(
+    () =>
+      areas
+        .flatMap(area => area.entities ?? [])
+        .map(entity => entity.entity_id)
+        .filter(Boolean)
+        .filter(entityId => isDeviceEntityCandidate(entityId))
+        .filter((entityId, index, all) => all.indexOf(entityId) === index),
+    [areas]
+  );
+  const deviceEntityIdSet = useMemo(() => new Set(allEntityIds), [allEntityIds]);
+  const allKnownEntityIds = useMemo(() => {
+    if (allEntityIds.length > 0) {
+      return allEntityIds;
+    }
+    return areaEntityIds;
+  }, [allEntityIds, areaEntityIds]);
+  const selectedRoomPopupBaseAreaName = useMemo(() => {
+    if (!roomPopupArea) return 'Room';
+    return areaOptions.find(area => area.areaId === roomPopupArea.areaId)?.areaName ?? roomPopupArea.areaId;
+  }, [areaOptions, roomPopupArea]);
+  const selectedRoomPopupAppearance = useMemo<RoomAppearance>(() => {
+    if (!roomPopupArea) return {};
+    return lightingSettings.roomPopupAppearance[roomPopupArea.areaId] ?? {};
+  }, [lightingSettings.roomPopupAppearance, roomPopupArea]);
+  const selectedRoomPopupAreaName = useMemo(() => {
+    return selectedRoomPopupAppearance.displayName?.trim() || selectedRoomPopupBaseAreaName;
+  }, [selectedRoomPopupAppearance.displayName, selectedRoomPopupBaseAreaName]);
+  const selectedRoomPopupConfiguredEntityIds = useMemo(() => {
+    if (!roomPopupArea) return [] as string[];
+
+    return bindings
+      .filter(binding => binding.areaId === roomPopupArea.areaId)
+      .map(binding => binding.haEntity)
+      .filter((entityId, index, all) => all.indexOf(entityId) === index);
+  }, [bindings, roomPopupArea]);
+
+  const persistRemoteState = useCallback(async () => {
+    if (!connection || !hasLoadedRemote) return;
+
+    await connection.sendMessagePromise({
+      type: 'ha_dashboard_persistence/save',
+      version: 1,
+      bindings,
+      global_config: {
+        ambient_level: lightingSettings.ambientLevel,
+        default_floor_index: lightingSettings.defaultFloorIndex,
+        default_camera_position: lightingSettings.defaultCameraPosition,
+        room_popup_entities: lightingSettings.roomPopupEntities,
+        room_popup_appearance: lightingSettings.roomPopupAppearance,
+      },
+    });
+  }, [bindings, connection, hasLoadedRemote, lightingSettings]);
+
+  const handleSaveEdits = useCallback(() => {
+    void persistRemoteState().catch(() => {
+      // Keep local storage as fallback if remote save fails.
+    });
+  }, [persistRemoteState]);
+
+  const resolveBindingFromCandidates = useCallback(
+    (partName: string, candidatePartNames: string[]) => {
+      const normalizedChain = [partName, ...candidatePartNames]
+        .map(name => name.trim().toLowerCase())
+        .filter(Boolean)
+        .filter((value, index, all) => all.indexOf(value) === index);
+
+      for (const candidateName of normalizedChain) {
+        const hit = bindings.find(binding => binding.modelPartName.trim().toLowerCase() === candidateName);
+        if (hit) return hit;
+      }
+
+      return undefined;
+    },
+    [bindings]
+  );
+
+  const openRoomPopupByAreaId = useCallback((areaId: string) => {
+    setRoomPopupArea({ areaId });
+    setSelectedModelPartName(null);
+  }, []);
+
+  const handleModelPartClick = useCallback(
+    (partName: string, candidatePartNames: string[]) => {
+      const hitBinding = resolveBindingFromCandidates(partName, candidatePartNames);
+
+      if (viewerMode === 'edit') {
+        setSelectedModelPartName(candidatePartNames[0] ?? partName);
+        return;
+      }
+
+      if (!hitBinding) return;
+
+      openRoomPopupByAreaId(hitBinding.areaId);
+    },
+    [openRoomPopupByAreaId, resolveBindingFromCandidates, viewerMode]
+  );
+
+  const getRoomPopupEntityIds = useCallback(
+    (areaId: string, configuredEntityIds: string[]) => {
+      const override = lightingSettings.roomPopupEntities[areaId];
+      if (Array.isArray(override)) return override;
+      return configuredEntityIds;
+    },
+    [lightingSettings.roomPopupEntities]
+  );
+
+  const handleRoomPopupAddEntity = useCallback(
+    (entityId: string) => {
+      if (!roomPopupArea) return;
+
+      setLightingSettings(prev => {
+        const base = prev.roomPopupEntities[roomPopupArea.areaId] ?? selectedRoomPopupConfiguredEntityIds;
+        const nextRoomEntities = [...base, entityId].filter((value, index, all) => all.indexOf(value) === index);
+        const next = {
+          ...prev,
+          roomPopupEntities: {
+            ...prev.roomPopupEntities,
+            [roomPopupArea.areaId]: nextRoomEntities,
+          },
+        };
+        saveViewerLightingSettings(next);
+        return next;
+      });
+    },
+    [roomPopupArea, selectedRoomPopupConfiguredEntityIds]
+  );
+
+  const handleRoomPopupRemoveEntity = useCallback(
+    (entityId: string) => {
+      if (!roomPopupArea) return;
+
+      setLightingSettings(prev => {
+        const base = prev.roomPopupEntities[roomPopupArea.areaId] ?? selectedRoomPopupConfiguredEntityIds;
+        const nextRoomEntities = base.filter(value => value !== entityId);
+        const next = {
+          ...prev,
+          roomPopupEntities: {
+            ...prev.roomPopupEntities,
+            [roomPopupArea.areaId]: nextRoomEntities,
+          },
+        };
+        saveViewerLightingSettings(next);
+        return next;
+      });
+    },
+    [roomPopupArea, selectedRoomPopupConfiguredEntityIds]
+  );
+
+  const handleRoomPopupReset = useCallback(() => {
+    if (!roomPopupArea) return;
+
+    setLightingSettings(prev => {
+      const nextRoomPopupEntities = { ...prev.roomPopupEntities };
+      delete nextRoomPopupEntities[roomPopupArea.areaId];
+      const nextRoomPopupAppearance = { ...prev.roomPopupAppearance };
+      delete nextRoomPopupAppearance[roomPopupArea.areaId];
+      const next = {
+        ...prev,
+        roomPopupEntities: nextRoomPopupEntities,
+        roomPopupAppearance: nextRoomPopupAppearance,
+      };
+      saveViewerLightingSettings(next);
+      return next;
+    });
+  }, [roomPopupArea]);
+
+  const updateRoomPopupAppearance = useCallback((areaId: string, updater: (current: RoomAppearance) => RoomAppearance) => {
+    setLightingSettings(prev => {
+      const current = prev.roomPopupAppearance[areaId] ?? {};
+      const nextForArea = updater(current);
+      const nextRoomPopupAppearance = { ...prev.roomPopupAppearance };
+      if (Object.keys(nextForArea).length === 0) {
+        delete nextRoomPopupAppearance[areaId];
+      } else {
+        nextRoomPopupAppearance[areaId] = nextForArea;
+      }
+      const next = {
+        ...prev,
+        roomPopupAppearance: nextRoomPopupAppearance,
+      };
+      saveViewerLightingSettings(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAllEntities = async () => {
+      if (!connection) return;
+      try {
+        const registry = (await connection.sendMessagePromise({
+          type: 'config/entity_registry/list',
+        })) as Array<{ entity_id?: unknown; device_id?: unknown }>;
+
+        if (cancelled || !Array.isArray(registry)) return;
+
+        const rawIds = registry
+          .map(item => String(item?.entity_id ?? '').trim())
+          .filter(Boolean)
+          .filter((entityId, index, all) => all.indexOf(entityId) === index);
+        setAllRegistryEntityIds(rawIds);
+
+        const ids = registry
+          .filter(item => String(item?.device_id ?? '').trim() !== '')
+          .map(item => String(item?.entity_id ?? '').trim())
+          .filter(Boolean)
+          .filter(entityId => isDeviceEntityCandidate(entityId))
+          .filter((entityId, index, all) => all.indexOf(entityId) === index);
+
+        setAllEntityIds(ids);
+      } catch {
+        // Keep fallback area entities when registry query fails.
+      }
+    };
+
+    void loadAllEntities();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connection]);
+
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (!e.shiftKey) return;
@@ -881,7 +1796,11 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
                       revealStart={i === 0 || maxFloorIndex === 0 ? 0 : (i - 1) / maxFloorIndex}
                       revealEnd={i === 0 || maxFloorIndex === 0 ? 0 : i / maxFloorIndex}
                       bindings={bindings}
-                      onModelPartClick={partName => setSelectedModelPartName(partName)}
+                      onModelPartClick={handleModelPartClick}
+                      onAreaMarkerClick={(areaId, _areaName) => openRoomPopupByAreaId(areaId)}
+                      showRoomMarkers={viewerMode === 'view' && i === activeFloorIndex}
+                      roomAppearanceByArea={lightingSettings.roomPopupAppearance}
+                      enableHoverHighlights={viewerMode === 'edit'}
                     />
                   </FloorErrorBoundary>
                 ))}
@@ -930,6 +1849,72 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
           onReset={handleReset}
         />
 
+        <div
+          style={{
+            position: 'fixed',
+            left: 14,
+            top: 70,
+            zIndex: 220,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+          }}
+        >
+          <button
+            type='button'
+            onClick={() => {
+              setViewerMode('edit');
+              setRoomPopupArea(null);
+            }}
+            style={{
+              border: viewerMode === 'edit' ? '1px solid rgba(89,183,255,0.55)' : '1px solid rgba(255,255,255,0.24)',
+              background: viewerMode === 'edit' ? 'rgba(89,183,255,0.22)' : 'rgba(0,0,0,0.5)',
+              color: 'white',
+              borderRadius: 8,
+              padding: '7px 10px',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            Edit Mode
+          </button>
+          <button
+            type='button'
+            onClick={() => {
+              setViewerMode('view');
+              setSelectedModelPartName(null);
+            }}
+            style={{
+              border: viewerMode === 'view' ? '1px solid rgba(89,183,255,0.55)' : '1px solid rgba(255,255,255,0.24)',
+              background: viewerMode === 'view' ? 'rgba(89,183,255,0.22)' : 'rgba(0,0,0,0.5)',
+              color: 'white',
+              borderRadius: 8,
+              padding: '7px 10px',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            View Mode
+          </button>
+          {viewerMode === 'edit' && (
+            <button
+              type='button'
+              onClick={handleSaveEdits}
+              style={{
+                border: '1px solid rgba(126,232,166,0.5)',
+                background: 'rgba(126,232,166,0.2)',
+                color: '#e8fff0',
+                borderRadius: 8,
+                padding: '7px 10px',
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              Save Edits
+            </button>
+          )}
+        </div>
+
         {hasMovedCamera && (
           <button
             type='button'
@@ -957,12 +1942,53 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
       </div>
 
       <ObjectConfigPopup
-        open={selectedModelPartName !== null}
+        open={viewerMode === 'edit' && selectedModelPartName !== null}
         modelPartName={selectedModelPartName ?? ''}
         existingBinding={selectedBinding}
         onSave={handleSaveBinding}
         onRemove={handleRemoveBinding}
         onClose={handleClosePopup}
+      />
+
+      <RoomInfoPopup
+        open={viewerMode === 'view' && roomPopupArea !== null}
+        baseAreaName={selectedRoomPopupBaseAreaName}
+        areaName={selectedRoomPopupAreaName}
+        roomAppearance={selectedRoomPopupAppearance}
+        availableAreas={areaOptions}
+        selectedAreaId={roomPopupArea?.areaId ?? null}
+        entityIds={roomPopupArea ? getRoomPopupEntityIds(roomPopupArea.areaId, selectedRoomPopupConfiguredEntityIds) : []}
+        availableEntityIds={
+          roomPopupArea
+            ? (areas.find(area => area.area_id === roomPopupArea.areaId)?.entities ?? [])
+                .map(entity => entity.entity_id)
+                .filter(entityId => isDeviceEntityCandidate(entityId))
+                .filter(entityId => (allEntityIds.length === 0 ? true : deviceEntityIdSet.has(entityId)))
+            : []
+        }
+        allAvailableEntityIds={allKnownEntityIds}
+        allRegistryEntityIds={allRegistryEntityIds}
+        onSelectAreaId={areaId => setRoomPopupArea({ areaId })}
+        onChangeDisplayName={displayName => {
+          if (!roomPopupArea) return;
+          const normalized = displayName.trim();
+          updateRoomPopupAppearance(roomPopupArea.areaId, current => ({
+            ...current,
+            displayName: normalized || undefined,
+          }));
+        }}
+        onChangeIconKey={iconKey => {
+          if (!roomPopupArea) return;
+          updateRoomPopupAppearance(roomPopupArea.areaId, current => ({ ...current, iconKey }));
+        }}
+        onChangeColor={color => {
+          if (!roomPopupArea) return;
+          updateRoomPopupAppearance(roomPopupArea.areaId, current => ({ ...current, color }));
+        }}
+        onAdd={handleRoomPopupAddEntity}
+        onRemove={handleRoomPopupRemoveEntity}
+        onReset={handleRoomPopupReset}
+        onClose={() => setRoomPopupArea(null)}
       />
     </>
   );

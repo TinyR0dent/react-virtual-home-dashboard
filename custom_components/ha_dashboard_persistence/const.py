@@ -56,6 +56,8 @@ DEFAULT_PAYLOAD = {
         "ambient_level": 45,
         "default_floor_index": 0,
         "default_camera_position": None,
+        "room_popup_entities": {},
+        "room_popup_appearance": {},
     },
     "floors": [
         {
