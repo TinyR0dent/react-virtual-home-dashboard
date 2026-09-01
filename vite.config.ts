@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const folderName = process.env.VITE_FOLDER_NAME?.trim() || 'ha-dashboard';
+const folderName = process.env.VITE_FOLDER_NAME?.trim() || 'ha-dashboard-panel';
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({

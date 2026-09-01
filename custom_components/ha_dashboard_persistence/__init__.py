@@ -61,6 +61,15 @@ def _panel_target_dir(hass: HomeAssistant) -> Path:
     return Path(hass.config.path("www")) / PANEL_TARGET_FOLDER
 
 
+def _panel_iframe_url(hass: HomeAssistant) -> str:
+    index_path = _panel_target_dir(hass) / "index.html"
+    try:
+        token = int(index_path.stat().st_mtime_ns)
+        return f"/local/{PANEL_TARGET_FOLDER}/index.html?v={token}"
+    except OSError:
+        return f"/local/{PANEL_TARGET_FOLDER}/index.html"
+
+
 async def _async_install_panel_assets(hass: HomeAssistant) -> None:
     source_dir = _panel_source_dir()
     if not source_dir.exists():
@@ -89,7 +98,7 @@ def _register_sidebar_panel_once(hass: HomeAssistant) -> None:
         sidebar_icon=PANEL_ICON,
         frontend_url_path=PANEL_URL_PATH,
         config={
-            "url": f"/local/{PANEL_TARGET_FOLDER}/index.html",
+            "url": _panel_iframe_url(hass),
             "require_admin": False,
         },
         require_admin=False,

@@ -6,14 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:release": "npm run build && npm run package:integration",
+    "build:release": "set VITE_FOLDER_NAME=ha-dashboard-panel&& npm run build && npm run package:integration",
     "lint": "oxlint",
     "preview": "vite preview",
     "prettier": "prettier --write .",
-    "package:integration": "npx tsx scripts/package-integration.ts",
-    "sync": "npx tsx scripts/sync-types.ts",
+    "package:integration": "tsx scripts/package-integration.ts",
+    "sync": "tsx scripts/sync-types.ts",
     "prebuild": "npm run prettier",
-    "deploy": "npx tsx scripts/deploy.ts"
+    "deploy": "tsx scripts/deploy.ts"
   },
   "dependencies": {
     "@hakit/components": "^6.0.2",
@@ -36,6 +36,7 @@
     "oxlint": "^1.71.0",
     "prettier": "^3.9.5",
     "prompts": "^2.4.2",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
   }

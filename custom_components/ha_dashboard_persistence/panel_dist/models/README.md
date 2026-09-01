@@ -21,3 +21,18 @@ Place your Blender exports here. The viewer expects:
 - Use PBR materials (Principled BSDF) — they map directly to Three.js `MeshStandardMaterial`
 - Centre your model at the world origin so it loads centred in the viewer
 - Keep polygon count reasonable for wall-mounted tablet performance (~100k–500k tris is fine)
+
+## Naming conventions
+- Name objects which you want to attach a HA device to with _*type* e.g. _Floor or _Light.
+
+- the following aliases are accepted:
+
+### Object Aliases
+#### Lights
+- 'light', 'lamp', 'chandelier', 'sconce'
+
+#### Doors
+- 'door', 'gate', 'entrance', 'exit'
+
+#### Areas (For presence)
+- 'floor', 'room', 'area', 'zone'
