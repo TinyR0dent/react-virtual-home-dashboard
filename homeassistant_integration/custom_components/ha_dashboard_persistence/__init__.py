@@ -116,13 +116,8 @@ async def _register_sidebar_panel(hass: HomeAssistant) -> None:
         if f"Overwriting panel {PANEL_URL_PATH}" not in str(err):
             raise
 
-        # During reloads Home Assistant can still retain the existing panel.
-        _LOGGER.warning("Panel %s already registered, retrying registration", PANEL_URL_PATH)
-        try:
-            frontend.async_remove_panel(PANEL_URL_PATH)
-        except Exception:
-            pass
-        _register_sidebar_panel_once(hass)
+        # Non-fatal during reload races; keep startup alive and refresh next update.
+        _LOGGER.warning("Panel %s already registered; keeping existing panel", PANEL_URL_PATH)
 
 
 def _unregister_sidebar_panel(hass: HomeAssistant) -> None:
@@ -423,39 +418,20 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     return True
 
 
-from homeassistant.components.http import StaticPathConfig
-from homeassistant.components import frontend
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault("entries", {})
     hass.data[DOMAIN]["entries"][entry.entry_id] = entry
-
-    # 1. Install panel assets (must complete before registering paths/panel)
     await _async_install_panel_assets(hass)
 
-    from homeassistant.components.http import StaticPathConfig
+    try:
+        await _register_sidebar_panel(hass)
+    except Exception:
+        _LOGGER.exception("Failed to register sidebar panel")
 
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                url_path="/local/ha-dashboard",
-                path=hass.config.path("www/ha-dashboard"),
-                cache_headers=False,
-            )
-        ]
-    )
-
-    # 3. Register the sidebar panel (async function)
-    await _register_sidebar_panel(hass)
-
-    # 4. Register update listener
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
-
-
-
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entries = hass.data.get(DOMAIN, {}).get("entries", {})
@@ -469,4 +445,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await _async_install_panel_assets(hass)
-    await _register_sidebar_panel(hass)
+    try:
+        await _register_sidebar_panel(hass)
+    except Exception:
+        _LOGGER.exception("Failed to re-register sidebar panel on options update")
