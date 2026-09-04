@@ -14,7 +14,11 @@ export const ROOM_ICON_BY_KEY: Record<RoomIconKey, LucideIcon> = {
 };
 
 function EntityStatusRow({ entityId, onRemove }: { entityId: string; onRemove?: (entityId: string) => void }) {
+  console.log('rendering row for', entityId);
+
   const entity = useEntity(entityId as EntityName) as { state?: string; attributes?: { friendly_name?: string } } | undefined;
+  console.log('got entity for', entityId, entity);
+
   const friendlyName = entity?.attributes?.friendly_name || entityId;
   return (
     <div
@@ -215,6 +219,7 @@ export function RoomInfoPopup({
   onReset: () => void;
   onClose: () => void;
 }) {
+  console.log('RoomInfoPopup rendered with open:', open);
   const [selectedEntityToAdd, setSelectedEntityToAdd] = useState<string | null>(null);
   const [showAllEntities, setShowAllEntities] = useState(false);
   const [showAbsoluteAllEntities, setShowAbsoluteAllEntities] = useState(false);
@@ -261,9 +266,7 @@ export function RoomInfoPopup({
 
   console.log('checking if RoomInfoPopup should render, open:', open);
 
-  if (!open) {
-    return <div style={{ display: 'none' }} />;
-  }
+  if (!open) return null;
 
   console.log('RoomInfoPopup rendered');
 
@@ -488,7 +491,9 @@ export function RoomInfoPopup({
           {entityIds.length === 0 ? (
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>No entities configured for this room popup.</div>
           ) : (
-            entityIds.map(entityId => <EntityStatusRow key={entityId} entityId={entityId} onRemove={onRemove} />)
+            entityIds.map(entityId => {
+              return <EntityStatusRow key={entityId} entityId={entityId} onRemove={onRemove} />;
+            })
           )}
         </div>
       </div>

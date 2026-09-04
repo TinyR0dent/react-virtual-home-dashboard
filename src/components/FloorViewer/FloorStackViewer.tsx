@@ -675,6 +675,7 @@ function isDeviceEntityCandidate(entityId: string): boolean {
 export { type FloorModelConfig, type FloorStackViewerProps, defaultCameraPositions } from './bindings';
 
 export function FloorStackViewer({ floors, startY = 40, cameraPosition = defaultCameraPositions[0].isometric }: FloorStackViewerProps) {
+  console.log('FSV: start render');
   const connection = useHass(state => state.connection) as {
     sendMessagePromise: (message: Record<string, unknown>) => Promise<unknown>;
   } | null;
@@ -686,21 +687,34 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
   const maxFloorIndex = Math.max(0, floorCount - 1);
   const isMobileDevice = typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
 
+  console.log('FSV: useState bindings');
   const [bindings, setBindings] = useState<ModelBinding[]>(() => loadBindingsFromStorage());
+  console.log('FSV: useState loadedRemote');
   const [hasLoadedRemote, setHasLoadedRemote] = useState(false);
+  console.log('FSV: useState selectedModelPartName');
   const [selectedModelPartName, setSelectedModelPartName] = useState<string | null>(null);
+  console.log('FSV: useState viewerMode');
   const [viewerMode, setViewerMode] = useState<ViewerMode>('edit');
+  console.log('FSV: useState roomPopupArea');
   const [roomPopupArea, setRoomPopupArea] = useState<{ areaId: string } | null>(null);
+  console.log('FSV: useState allRegistryEntityIds');
   const [allRegistryEntityIds, setAllRegistryEntityIds] = useState<string[]>([]);
+  console.log('FSV: useState allEntityIds');
   const [allEntityIds, setAllEntityIds] = useState<string[]>([]);
+  console.log('FSV: useState scrollProgress');
   const [scrollProgress, setScrollProgress] = useState(0);
+  console.log('FSV: useState modelLoadErrors');
   const [modelLoadErrors, setModelLoadErrors] = useState<Record<string, string>>({});
+  console.log('FSV: useState activeFloorIndex');
   const [activeFloorIndex, setActiveFloorIndex] = useState(() => {
     const settings = loadViewerLightingSettings();
     return Math.max(0, Math.min(maxFloorIndex, settings.defaultFloorIndex ?? 0));
   });
+  console.log('FSV: useState lightingSettings');
   const [lightingSettings, setLightingSettings] = useState<ViewerLightingSettings>(() => loadViewerLightingSettings());
+  console.log('FSV: useState hasMovedCamera');
   const [hasMovedCamera, setHasMovedCamera] = useState(false);
+  console.log('FSV: useState loadedFloorCount');
   const [loadedFloorCount, setLoadedFloorCount] = useState<number>(() => {
     const settings = loadViewerLightingSettings();
     const defaultFloorIndex = Math.max(0, Math.min(maxFloorIndex, settings.defaultFloorIndex ?? 0));
@@ -768,6 +782,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     };
   }, []);
 
+  console.log('FSV: useEffect preload next floor');
   useEffect(() => {
     const nextFloor = floors[loadedFloorCount];
     if (!nextFloor) return;
@@ -805,10 +820,12 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     };
   }, []);
 
+  console.log('FSV: useEffect save bindings to storage');
   useEffect(() => {
     saveBindingsToStorage(bindings);
   }, [bindings]);
 
+  console.log('FSV: useEffect clean up model load errors');
   useEffect(() => {
     const knownUrls = new Set(floors.map(floor => floor.modelUrl));
     setModelLoadErrors(prev => {
@@ -930,6 +947,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     };
   }, [connection]);
 
+  console.log('FSV: useEffect save lighting settings to remote');
   useEffect(() => {
     if (!connection || !hasLoadedRemote) return;
 
@@ -1033,16 +1051,19 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     resetRef.reset();
   }, [resetRef]);
 
+  console.log('FSV: useCallback handleSaveBinding');
   const handleSaveBinding: ObjectConfigPopupProps['onSave'] = useCallback(next => {
     setBindings(prev => upsertBinding(prev, next));
     setSelectedModelPartName(null);
   }, []);
 
+  console.log('FSV: useCallback handleRemoveBinding');
   const handleRemoveBinding: ObjectConfigPopupProps['onRemove'] = useCallback(modelPartName => {
     setBindings(prev => removeBinding(prev, modelPartName));
     setSelectedModelPartName(null);
   }, []);
 
+  console.log('FSV: useCallback handleClosePopup');
   const handleClosePopup = useCallback(() => {
     setSelectedModelPartName(null);
   }, []);
@@ -1060,24 +1081,30 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
         .filter((entityId, index, all) => all.indexOf(entityId) === index),
     [areas]
   );
+  console.log('FSV: useMemo areaOptions and areaEntityIds');
   const deviceEntityIdSet = useMemo(() => new Set(allEntityIds), [allEntityIds]);
+  console.log('FSV: useMemo deviceEntityIdSet');
   const allKnownEntityIds = useMemo(() => {
     if (allEntityIds.length > 0) {
       return allEntityIds;
     }
     return areaEntityIds;
   }, [allEntityIds, areaEntityIds]);
+  console.log('FSV: useMemo allKnownEntityIds');
   const selectedRoomPopupBaseAreaName = useMemo(() => {
     if (!roomPopupArea) return 'Room';
     return areaOptions.find(area => area.areaId === roomPopupArea.areaId)?.areaName ?? roomPopupArea.areaId;
   }, [areaOptions, roomPopupArea]);
+  console.log('FSV: useMemo selectedRoomPopupBaseAreaName');
   const selectedRoomPopupAppearance = useMemo<RoomAppearance>(() => {
     if (!roomPopupArea) return {};
     return lightingSettings.roomPopupAppearance[roomPopupArea.areaId] ?? {};
   }, [lightingSettings.roomPopupAppearance, roomPopupArea]);
+  console.log('FSV: useMemo selectedRoomPopupAppearance');
   const selectedRoomPopupAreaName = useMemo(() => {
     return selectedRoomPopupAppearance.displayName?.trim() || selectedRoomPopupBaseAreaName;
   }, [selectedRoomPopupAppearance.displayName, selectedRoomPopupBaseAreaName]);
+  console.log('FSV: useMemo selectedRoomPopupAreaName');
   const selectedRoomPopupConfiguredEntityIds = useMemo(() => {
     if (!roomPopupArea) return [] as string[];
 
@@ -1086,6 +1113,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
       .map(binding => binding.haEntity)
       .filter((entityId, index, all) => all.indexOf(entityId) === index);
   }, [bindings, roomPopupArea]);
+  console.log('FSV: useMemo selectedRoomPopupConfiguredEntityIds');
 
   const persistRemoteState = useCallback(async () => {
     if (!connection || !hasLoadedRemote) return;
@@ -1103,12 +1131,13 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
       },
     });
   }, [bindings, connection, hasLoadedRemote, lightingSettings]);
-
+  console.log('FSV: useCallback persistRemoteState');
   const handleSaveEdits = useCallback(() => {
     void persistRemoteState().catch(() => {
       // Keep local storage as fallback if remote save fails.
     });
   }, [persistRemoteState]);
+  console.log('FSV: useCallback handleSaveEdits');
 
   const handleModelLoadError = useCallback((modelUrl: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -1117,6 +1146,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
       return { ...prev, [modelUrl]: message };
     });
   }, []);
+  console.log('FSV: useCallback handleModelLoadError');
 
   const resolveBindingFromCandidates = useCallback(
     (partName: string, candidatePartNames: string[]) => {
@@ -1134,11 +1164,13 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     },
     [bindings]
   );
+  console.log('FSV: useCallback resolveBindingFromCandidates');
 
   const openRoomPopupByAreaId = useCallback((areaId: string) => {
     setRoomPopupArea({ areaId });
     setSelectedModelPartName(null);
   }, []);
+  console.log('FSV: useCallback openRoomPopupByAreaId');
 
   const handleModelPartClick = useCallback(
     (partName: string, candidatePartNames: string[]) => {
@@ -1155,6 +1187,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     },
     [openRoomPopupByAreaId, resolveBindingFromCandidates, viewerMode]
   );
+  console.log('FSV: useCallback handleModelPartClick');
 
   const getRoomPopupEntityIds = useCallback(
     (areaId: string, configuredEntityIds: string[]) => {
@@ -1164,6 +1197,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     },
     [lightingSettings.roomPopupEntities]
   );
+  console.log('FSV: useCallback getRoomPopupEntityIds');
 
   const handleRoomPopupAddEntity = useCallback(
     (entityId: string) => {
@@ -1185,6 +1219,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     },
     [roomPopupArea, selectedRoomPopupConfiguredEntityIds]
   );
+  console.log('FSV: useCallback handleRoomPopupAddEntity');
 
   const handleRoomPopupRemoveEntity = useCallback(
     (entityId: string) => {
@@ -1206,6 +1241,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     },
     [roomPopupArea, selectedRoomPopupConfiguredEntityIds]
   );
+  console.log('FSV: useCallback handleRoomPopupRemoveEntity');
 
   const handleRoomPopupReset = useCallback(() => {
     if (!roomPopupArea) return;
@@ -1224,6 +1260,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
       return next;
     });
   }, [roomPopupArea]);
+  console.log('FSV: useCallback handleRoomPopupReset');
 
   const updateRoomPopupAppearance = useCallback((areaId: string, updater: (current: RoomAppearance) => RoomAppearance) => {
     setLightingSettings(prev => {
@@ -1243,6 +1280,7 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
       return next;
     });
   }, []);
+  console.log('FSV: useCallback updateRoomPopupAppearance');
 
   useEffect(() => {
     let cancelled = false;
@@ -1294,7 +1332,8 @@ export function FloorStackViewer({ floors, startY = 40, cameraPosition = default
     return () => window.removeEventListener('wheel', onWheel, { capture: true });
   }, [onSeekIndex]);
 
-  console.log('RoomInfoPopup open:', viewerMode === 'view' && roomPopupArea !== null);
+  console.log('FSV: rendering ObjectConfigPopup, open =', viewerMode === 'edit' && selectedModelPartName !== null);
+  console.log('FSV: rendering RoomInfoPopup, open =', viewerMode === 'view' && roomPopupArea !== null);
 
   return (
     <>
