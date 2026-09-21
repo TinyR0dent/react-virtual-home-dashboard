@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.storage import Store
 import voluptuous as vol
+import json
 
 from .const import (
     DEFAULT_PAYLOAD,
@@ -70,6 +71,18 @@ def _panel_iframe_url(hass: HomeAssistant) -> str:
         return f"/local/{PANEL_TARGET_FOLDER}/index.html"
 
 
+MANIFEST_FILENAME = ".panel_install_manifest.json"
+
+
+def _relative_files(base: Path) -> set[str]:
+    """All file paths under base, as POSIX-style strings relative to base."""
+    return {
+        str(path.relative_to(base).as_posix())
+        for path in base.rglob("*")
+        if path.is_file()
+    }
+
+
 async def _async_install_panel_assets(hass: HomeAssistant) -> None:
     source_dir = _panel_source_dir()
     if not source_dir.exists():
@@ -78,23 +91,36 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
 
     target_dir = _panel_target_dir(hass)
 
-     def _copy() -> None:
+    def _copy() -> None:
         target_dir.mkdir(parents=True, exist_ok=True)
-        managed_entries = {entry.name for entry in source_dir.iterdir()}
+        manifest_path = target_dir / MANIFEST_FILENAME
 
-        for entry in target_dir.iterdir():
-            if entry.name in managed_entries:
-                if entry.is_dir():
-                    shutil.rmtree(entry)
-                else:
-                    entry.unlink()
+        previous_files: set[str] = set()
+        if manifest_path.exists():
+            try:
+                previous_files = set(json.loads(manifest_path.read_text()))
+            except (OSError, ValueError):
+                previous_files = set()
 
-        for entry in source_dir.iterdir():
-            dest = target_dir / entry.name
-            if entry.is_dir():
-                shutil.copytree(entry, dest)
-            else:
-                shutil.copy2(entry, dest)
+        current_source_files = _relative_files(source_dir)
+
+        stale_files = previous_files - current_source_files
+        for rel_path in stale_files:
+            stale_target = target_dir / rel_path
+            if stale_target.exists():
+                stale_target.unlink()
+
+        for rel_path in current_source_files:
+            src_file = source_dir / rel_path
+            dest_file = target_dir / rel_path
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, dest_file)
+
+        for dirpath in sorted(target_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if dirpath.is_dir() and dirpath != target_dir and not any(dirpath.iterdir()):
+                dirpath.rmdir()
+
+        manifest_path.write_text(json.dumps(sorted(current_source_files)))
 
     await hass.async_add_executor_job(_copy)
 
