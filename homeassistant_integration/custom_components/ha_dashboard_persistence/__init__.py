@@ -78,11 +78,23 @@ async def _async_install_panel_assets(hass: HomeAssistant) -> None:
 
     target_dir = _panel_target_dir(hass)
 
-    def _copy() -> None:
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        shutil.copytree(source_dir, target_dir)
+     def _copy() -> None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        managed_entries = {entry.name for entry in source_dir.iterdir()}
+
+        for entry in target_dir.iterdir():
+            if entry.name in managed_entries:
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+
+        for entry in source_dir.iterdir():
+            dest = target_dir / entry.name
+            if entry.is_dir():
+                shutil.copytree(entry, dest)
+            else:
+                shutil.copy2(entry, dest)
 
     await hass.async_add_executor_job(_copy)
 
